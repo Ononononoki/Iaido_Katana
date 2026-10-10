@@ -1,0 +1,24 @@
+# only these public files are ever committed: the source, the project, the Thunderstore texts and icon.
+# notes, research, tests, tools, builds and zips stay on the developer's computer
+*
+!*/
+!.gitignore
+!LICENSE
+!README.md
+!Iaido_Katana.csproj
+!src/*.cs
+!package/manifest.json
+!package/README.md
+!package/CHANGELOG.md
+!package/icon.png
+!art/make_katana.py
+!art/make_flametal_concept.py
+!art/out/katana.obj
+!art/out/saya.obj
+!art/out/katana_flametal.obj
+!art/out/saya_flametal.obj
+!art/out/katana_steel_d.png
+!art/out/katana_steel_m.png
+!art/out/katana_flametal_d.png
+!art/out/katana_flametal_m.png
+!art/out/katana_flametal_e.png

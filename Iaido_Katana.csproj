@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- build: dotnet build -c Release  (override paths with -p:GamePath=... -p:ProfilePath=...) -->
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>Iaido_Katana</AssemblyName>
+    <RootNamespace>Iaido_Katana</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <Optimize>true</Optimize>
+    <!-- no pdb, so the dll carries no local build path -->
+    <DebugType>none</DebugType>
+    <!-- steam install of the game -->
+    <GamePath Condition="'$(GamePath)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Valheim</GamePath>
+    <!-- thunderstore mod manager profile that has bepinex and jotunn -->
+    <ProfilePath Condition="'$(ProfilePath)' == ''">$(AppData)\Thunderstore Mod Manager\DataFolder\Valheim\profiles\Vanilla_plus</ProfilePath>
+    <Managed>$(GamePath)\valheim_Data\Managed</Managed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="test\**" />
+    <Reference Include="BepInEx"><HintPath>$(ProfilePath)\BepInEx\core\BepInEx.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(ProfilePath)\BepInEx\core\0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Jotunn"><HintPath>$(ProfilePath)\BepInEx\plugins\ValheimModding-Jotunn\Jotunn.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="assembly_valheim"><HintPath>$(Managed)\assembly_valheim.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="assembly_guiutils"><HintPath>$(Managed)\assembly_guiutils.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="assembly_utils"><HintPath>$(Managed)\assembly_utils.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine"><HintPath>$(Managed)\UnityEngine.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(Managed)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.AnimationModule"><HintPath>$(Managed)\UnityEngine.AnimationModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.AssetBundleModule"><HintPath>$(Managed)\UnityEngine.AssetBundleModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.AudioModule"><HintPath>$(Managed)\UnityEngine.AudioModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="assembly_postprocessing"><HintPath>$(Managed)\assembly_postprocessing.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UI"><HintPath>$(Managed)\UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UIModule"><HintPath>$(Managed)\UnityEngine.UIModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.PhysicsModule"><HintPath>$(Managed)\UnityEngine.PhysicsModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.ParticleSystemModule"><HintPath>$(Managed)\UnityEngine.ParticleSystemModule.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <!-- the katana model and its textures, made by art\make_katana.py -->
+  <ItemGroup>
+    <EmbeddedResource Include="art\out\katana.obj" LogicalName="Iaido_Katana.katana.obj" />
+    <EmbeddedResource Include="art\out\saya.obj" LogicalName="Iaido_Katana.saya.obj" />
+    <!-- the flametal katana's own shape and scabbard (art\make_flametal_concept.py, variant midnight_blade) -->
+    <EmbeddedResource Include="art\out\katana_flametal.obj" LogicalName="Iaido_Katana.katana_flametal.obj" />
+    <EmbeddedResource Include="art\out\saya_flametal.obj" LogicalName="Iaido_Katana.saya_flametal.obj" />
+    <EmbeddedResource Include="art\out\katana_*.png" LogicalName="Iaido_Katana.%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- copy the built dll into package/ so the zip step picks it up -->
+  <Target Name="CopyToPackage" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(MSBuildProjectDirectory)\package" />
+  </Target>
+</Project>
