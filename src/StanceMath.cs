@@ -113,21 +113,26 @@ namespace Iaido_Katana
     // the iai stance, in the player's own frame: x to the right, y up, z forward, meters from the feet
     internal sealed class StanceSettings
     {
-        internal float SpineTwist = -32f;   // the upper body turns left, which brings the right shoulder forward
-        internal float SpineLean = 10f;     // and leans forward a little
+        internal float SpineTwist = -33f;   // the upper body turns left, which brings the right shoulder forward
+        internal float SpineLean = 8f;      // and leans forward a little
         internal bool HeadForward = true;   // the neck turns back, so the head keeps looking where the player looks
-        internal Vector3 Grip = new Vector3(-0.1f, 1.14f, 0.2f); // right hand on the grip, in front of the left hip
-        internal float BladeYaw = 228f;     // the blade points back and out past the left hip (180 is straight back, which runs through a cape)
-        internal float BladePitch = 24f;    // and slopes down (30 before the blade got 30 cm longer, kept off the ground)
-        internal float EdgeRoll = 0f;       // 0 keeps the edge up, like a sword in its scabbard
-        internal float LeftAlongBlade = 0.15f; // left hand on the blade this far from the grip, where the scabbard mouth would be
+        // the right hand on the grip in front of the belly, the elbow bent and hanging down the side, the forearm across
+        // the belly and the wrist straight (found by StancePreview tune, the user's drawing of 11 Oct)
+        internal Vector3 Grip = new Vector3(-0.05f, 1.12f, 0.38f);
+        internal float BladeYaw = 215f;     // the blade points back and out past the left hip (180 is straight back, which runs through a cape)
+        internal float BladePitch = 26f;    // and slopes down
+        internal float EdgeRoll = -104f;    // the edge turned out from up, so the right hand lies on the grip palm down with a straight wrist
+        internal float LeftAlongBlade = 0.3f; // the left hand on the scabbard this far from the grip, the arm hanging relaxed
         internal float LeftOnBlade = 1f;      // 1 the left hand is on the blade, 0 it is at LeftHand (pulled back to the hip in the slash)
         internal Vector3 LeftHand = new Vector3(-0.24f, 1.0f, -0.04f);
-        internal Vector3 RightElbow = new Vector3(0.6f, 1.2f, -0.1f); // elbows bend toward these points
-        internal Vector3 LeftElbow = new Vector3(-0.6f, 1.05f, -0.1f);
+        internal Vector3 RightElbow = new Vector3(0.37f, 1.17f, 0.2f); // elbows bend toward these points
+        internal Vector3 LeftElbow = new Vector3(-0.8f, 1.19f, -0.12f);
+        internal float RightNatural = 0.8f; // 1: the elbows point wherever the arm is most natural, less: pulled toward these poles
+        internal float LeftNatural = 0.8f;
         internal Quaternion? Attach;          // set by the moves: the blade's turn in the player's frame, in place of yaw, pitch and roll
         internal Quaternion? SheathAt;        // where the scabbard really hangs (the blade's turn and SheathGrip), when the game knows it.
         internal Vector3 SheathGrip;          // the sheathing slides the blade into it, not into the stance's own aim
+        internal Vector3 MouthAxis;           // the scabbard's way from the mouth to the tip, where the left hand holds it off the blade (zero: the blade's)
     }
 
     // the thunderclap's low crouch, in the player's own frame, meters from the feet
@@ -163,6 +168,7 @@ namespace Iaido_Katana
     internal static class StanceSolver
     {
         internal const float PalmReach = 0.07f; // from the wrist to the middle of the palm, meters
+        internal const float KatanaLength = 1.815f; // from the grip to the tip (2.145 m, held 0.33 m from the pommel)
         internal const float AnkleHeight = 0.125f; // the ankle bone above the ground, in the ripped player at rest
 
         // the hips sunk, moved back and tipped for the crouch, weight 0 leaves them as animated
@@ -196,6 +202,238 @@ namespace Iaido_Katana
             if (s.LeftOnBlade >= 1f) return onBlade;
             var atHip = rootPos + QMath.Rotate(rootRot, s.LeftHand);
             return atHip + (onBlade - atHip) * Mathf.Clamp01(s.LeftOnBlade);
+        }
+
+        // the player's arms at rest, from the game's skeleton (art\out\rig.txt): the elbow bends forward about the bones'
+        // own z (the left arm's about -z), the hand's rest turn on the forearm, the forearm's way seen from the hand at
+        // rest, and the hand's thumb side (a grip runs through the fist this way)
+        internal sealed class ArmRig
+        {
+            internal Vector3 Hinge;
+            internal Quaternion RestHand;
+            internal Vector3 Forearm;
+            internal Vector3 Thumb;
+        }
+
+        internal static readonly ArmRig RightRig = new ArmRig
+        {
+            Hinge = new Vector3(0f, 0f, 1f), RestHand = new Quaternion(-0.06456f, -0.028324f, -0.012623f, 0.997432f),
+            Forearm = new Vector3(-0.021524f, 0.991346f, 0.129503f), Thumb = new Vector3(-1f, 0f, 0f),
+        };
+
+        internal static readonly ArmRig LeftRig = new ArmRig
+        {
+            Hinge = new Vector3(0f, 0f, -1f), RestHand = new Quaternion(-0.06456f, 0.028324f, 0.012623f, 0.997432f),
+            Forearm = new Vector3(0.021524f, 0.991346f, 0.129503f), Thumb = new Vector3(1f, 0f, 0f),
+        };
+
+        // the forearm's share of the hand's roll (turning the palm up or down), the wrist takes the rest, like a humanoid
+        // avatar's default lower arm twist. without it the whole roll twisted the wrist
+        internal const float ForearmRoll = 0.5f;
+
+        // where the elbow goes for a wrist at target, bent toward the pole, the wrist (pulled in to the arm's reach), and
+        // the way the elbow points out from the line between shoulder and wrist
+        internal static void Elbow(Arm arm, Vector3 target, Vector3 pole, out Vector3 elbow, out Vector3 wrist, out Vector3 bend)
+        {
+            float upper = QMath.Length(arm.Elbow - arm.Shoulder);
+            float lower = QMath.Length(arm.Wrist - arm.Elbow);
+            var toTarget = target - arm.Shoulder;
+            float d = Mathf.Clamp(QMath.Length(toTarget), 0.01f, upper + lower - 0.0005f);
+            var dir = QMath.Norm(toTarget);
+            var toPole = pole - arm.Shoulder;
+            bend = toPole - dir * QMath.Dot(toPole, dir);
+            if (QMath.Length(bend) < 1e-5f) bend = arm.Elbow - arm.Shoulder - dir * QMath.Dot(arm.Elbow - arm.Shoulder, dir);
+            bend = QMath.Norm(bend);
+            float cos = Mathf.Clamp((upper * upper + d * d - lower * lower) / (2f * upper * d), -1f, 1f);
+            float sin = (float)Math.Sqrt(1f - cos * cos);
+            elbow = arm.Shoulder + (dir * cos + bend * sin) * upper;
+            wrist = arm.Shoulder + dir * d;
+        }
+
+        // one arm to the wrist target with its hand turned to hand. the elbow bends toward the pole about its own axis
+        // only, like a real elbow (the upper arm rolls to point it there), the forearm takes its share of the hand's roll,
+        // and the wrist keeps the rest and its bend
+        internal static void Reach(ref Arm arm, Vector3 target, Vector3 pole, Quaternion hand, ArmRig rig)
+        {
+            Elbow(arm, target, pole, out var elbow, out var wrist, out var bend);
+            var hinge = QMath.Norm(QMath.Cross(bend, QMath.Norm(wrist - arm.Shoulder)));
+            arm.Upper = Along(QMath.Norm(elbow - arm.Shoulder), hinge, rig);
+            var forearm = Along(QMath.Norm(wrist - elbow), hinge, rig);
+            arm.Lower = QMath.Mul(forearm, AxisAngle(new Vector3(0f, 1f, 0f), Roll(forearm, hand, rig) * ForearmRoll));
+            arm.Hand = hand;
+            arm.Elbow = elbow;
+            arm.Wrist = wrist;
+        }
+
+        // how far (degrees) the hand is rolled about the forearm from its rest turn, for a forearm turned as forearm
+        internal static float Roll(Quaternion forearm, Quaternion hand, ArmRig rig)
+        {
+            var local = QMath.Mul(QMath.Mul(QMath.Conj(forearm), hand), QMath.Conj(rig.RestHand));
+            if (local.w < 0f) local = new Quaternion(-local.x, -local.y, -local.z, -local.w);
+            return 2f * (float)Math.Atan2(local.y, local.w) * Mathf.Rad2Deg;
+        }
+
+        // an arm bone's world turn with its length (+y) along way and the elbow's axis on hinge, not rolled
+        internal static Quaternion Along(Vector3 way, Vector3 hinge, ArmRig rig) =>
+            QMath.Mul(Frame(way, hinge), QMath.Conj(Frame(new Vector3(0f, 1f, 0f), rig.Hinge)));
+
+        // the turn whose +y is y and whose +z is z made square to it
+        private static Quaternion Frame(Vector3 y, Vector3 z) => QMath.Look(QMath.Norm(z - y * QMath.Dot(z, y)), y);
+
+        // a hand turned so its thumb side points along thumb and its forearm comes in as close to forearm as it can:
+        // the left hand round the scabbard or the handle, the grip through the fist
+        internal static Quaternion Holding(Vector3 thumb, Vector3 forearm, ArmRig rig) =>
+            QMath.Mul(QMath.Look(thumb, forearm), QMath.Conj(QMath.Look(rig.Thumb, rig.Forearm)));
+
+        // how a hand sits on its forearm, degrees from the rest pose: bent toward the palm (flex) and toward the thumb
+        // (thumb), the other way negative, and rolled about the forearm (palm down or up). fore is the forearm not
+        // rolled (Along), way its direction
+        internal static void Wrist(Quaternion fore, Vector3 way, Quaternion hand, ArmRig rig, out float flex, out float thumb, out float roll)
+        {
+            var f = QMath.Rotate(QMath.Conj(hand), way);
+            flex = Wrap((float)(Math.Atan2(-f.z, f.y) - Math.Atan2(-rig.Forearm.z, rig.Forearm.y)) * Mathf.Rad2Deg);
+            thumb = Wrap((float)(Math.Atan2(-QMath.Dot(f, rig.Thumb), f.y) - Math.Atan2(-QMath.Dot(rig.Forearm, rig.Thumb), rig.Forearm.y)) * Mathf.Rad2Deg);
+            roll = Roll(fore, hand, rig);
+        }
+
+        // how far a point is from the line between a and b
+        private static float Distance(Vector3 point, Vector3 a, Vector3 b)
+        {
+            var ab = b - a;
+            float u = Mathf.Clamp01(QMath.Dot(point - a, ab) / Math.Max(1e-6f, QMath.Dot(ab, ab)));
+            return QMath.Length(point - (a + ab * u));
+        }
+
+        private static float Wrap(float degrees) => degrees > 180f ? degrees - 360f : degrees < -180f ? degrees + 360f : degrees;
+
+        // how strained a wrist is: a little inside the comfortable ranges, steeply more outside them
+        internal static float Strain(float flex, float thumb, float roll)
+        {
+            float Over(float v, float low, float high) => Math.Max(0f, Math.Max(low - v, v - high));
+            float Sq(float x) => x * x;
+            return Sq(flex / 45f) + Sq(thumb / 25f) + 0.5f * Sq(roll / 90f)
+                   + 4f * (Sq(Over(flex, -40f, 40f) / 10f) + Sq(Over(thumb, -25f, 15f) / 10f) + Sq(Over(roll, -90f, 90f) / 10f));
+        }
+
+        private const float PolePull = 2f; // how strongly the stance's pole holds the elbow, at natural 0
+
+        // the body round the spine, to keep the elbows out of it: an upright ellipse 0.18 m to each side and 0.14 m to
+        // the front and back, turned and leant with the chest, 0.85 to 1.6 m above the feet (measured from the hips)
+        internal struct Torso
+        {
+            internal Vector3 Feet;
+            internal Quaternion Root, Chest;
+
+            internal Torso(Vector3 rootPos, Quaternion rootRot, StanceSettings s)
+            {
+                Feet = rootPos;
+                Root = rootRot;
+                Chest = QMath.Euler(s.SpineLean, s.SpineTwist, 0f);
+            }
+
+            // how deep a point is inside the body with room meters around it, 0 outside to 1 at the spine
+            internal float Inside(Vector3 point, float room)
+            {
+                if (Root.w == 0f && Root.x == 0f && Root.y == 0f && Root.z == 0f) return 0f;
+                var local = QMath.Rotate(QMath.Conj(Root), point - Feet);
+                if (local.y < 0.85f || local.y > 1.6f) return 0f;
+                var c = QMath.Rotate(QMath.Conj(Chest), new Vector3(local.x, local.y - 1f, local.z + 0.005f));
+                float x = c.x / (0.18f + room), z = c.z / (0.14f + room);
+                return Math.Max(0f, 1f - x * x - z * z);
+            }
+        }
+
+        // where each elbow pointed last frame (in the player's frame) and how far it may turn this frame, degrees. two
+        // ways can be about as natural, and without this the elbow could jump from one to the other in a frame
+        internal sealed class ElbowMemory
+        {
+            internal Vector3 Right, Left;
+            internal bool Has;
+            internal float MaxTurn;
+        }
+
+        // the elbow's way turned from last frame's toward want by at most MaxTurn degrees about the arm's line
+        private static Vector3 Limit(Vector3 want, Vector3 dir, Quaternion rootRot, ElbowMemory memory, ref Vector3 last)
+        {
+            if (memory == null) return want;
+            var wantLocal = QMath.Rotate(QMath.Conj(rootRot), want);
+            var line = QMath.Rotate(QMath.Conj(rootRot), dir);
+            var was = last - line * QMath.Dot(last, line);
+            if (memory.Has && memory.MaxTurn > 0f && QMath.Length(was) > 1e-4f)
+            {
+                was = QMath.Norm(was);
+                float angle = (float)Math.Atan2(QMath.Dot(QMath.Cross(was, wantLocal), line), QMath.Dot(was, wantLocal)) * Mathf.Rad2Deg;
+                wantLocal = QMath.Rotate(AxisAngle(line, Mathf.Clamp(angle, -memory.MaxTurn, memory.MaxTurn)), was);
+            }
+            last = wantLocal;
+            return QMath.Rotate(rootRot, wantLocal);
+        }
+
+        // which way the elbow points out from the line between shoulder and wrist. a nearly straight arm can point it
+        // anywhere, and that sets how far the forearm must roll, so it is tried all round and the way where the wrist
+        // bends and rolls least wins, pulled toward the pole by 1 - natural (and a little always, to settle ties)
+        // holding: the hand holds the scabbard or the handle with its thumb along this way, and turns about it with the
+        // forearm (zero: the hand stays as hand)
+        // keepFrom to keepTo: a line the forearm stays 8 cm away from (the left arm from the blade), none when equal
+        internal static Vector3 Swivel(Arm arm, Vector3 target, Quaternion hand, Vector3 pole, ArmRig rig, float natural, Torso body,
+            Vector3 holding = default, Vector3 keepFrom = default, Vector3 keepTo = default)
+        {
+            float upper = QMath.Length(arm.Elbow - arm.Shoulder);
+            float lower = QMath.Length(arm.Wrist - arm.Elbow);
+            var toTarget = target - arm.Shoulder;
+            float d = Mathf.Clamp(QMath.Length(toTarget), 0.01f, upper + lower - 0.0005f);
+            var dir = QMath.Norm(toTarget);
+            float cos = Mathf.Clamp((upper * upper + d * d - lower * lower) / (2f * upper * d), -1f, 1f);
+            float sin = (float)Math.Sqrt(1f - cos * cos);
+            var wrist = arm.Shoulder + dir * d;
+            var e1 = QMath.Norm(QMath.Cross(dir, Math.Abs(dir.y) < 0.9f ? new Vector3(0f, 1f, 0f) : new Vector3(1f, 0f, 0f)));
+            var e2 = QMath.Cross(dir, e1);
+            var toPole = pole - arm.Shoulder;
+            var poleBend = toPole - dir * QMath.Dot(toPole, dir);
+            poleBend = QMath.Length(poleBend) > 1e-5f ? QMath.Norm(poleBend) : e1;
+            float pull = (1f - Mathf.Clamp01(natural)) * PolePull + 0.05f;
+
+            float Cost(float angle)
+            {
+                var bend = e1 * (float)Math.Cos(angle) + e2 * (float)Math.Sin(angle);
+                var elbow = arm.Shoulder + (dir * cos + bend * sin) * upper;
+                var way = QMath.Norm(wrist - elbow);
+                var turned = holding == Vector3.zero ? hand : Holding(holding, way, rig);
+                Wrist(Along(way, QMath.Norm(QMath.Cross(bend, dir)), rig), way, turned, rig, out float flex, out float thumb, out float roll);
+                // the elbow and the forearm stay out of the body, and off the line (the hand end holds it, so it may touch)
+                float inside = body.Inside(elbow, 0.07f) + body.Inside((elbow + wrist) * 0.5f, 0.06f);
+                if (keepFrom != keepTo)
+                    for (float u = 0f; u < 0.7f; u += 0.3f)
+                    {
+                        float near = Math.Max(0f, 1f - Distance(elbow + (wrist - elbow) * u, keepFrom, keepTo) / 0.08f);
+                        inside += near * near;
+                    }
+                return Strain(flex, thumb, roll) + pull * (1f - QMath.Dot(bend, poleBend)) + 20f * inside;
+            }
+
+            // all round in 15 degree steps, then finer round the best
+            float best = 0f, bestCost = float.MaxValue;
+            for (int k = 0; k < 24; k++)
+            {
+                float angle = k * Mathf.PI / 12f;
+                float c = Cost(angle);
+                if (c < bestCost)
+                {
+                    bestCost = c;
+                    best = angle;
+                }
+            }
+            for (float step = Mathf.PI / 24f; step > 0.004f; step *= 0.5f)
+                foreach (float angle in new[] { best - step, best + step })
+                {
+                    float c = Cost(angle);
+                    if (c < bestCost)
+                    {
+                        bestCost = c;
+                        best = angle;
+                    }
+                }
+            return e1 * (float)Math.Cos(best) + e2 * (float)Math.Sin(best);
         }
 
         // turns a two-bone chain so the wrist reaches the target, bending toward the pole. the bones keep their twist
@@ -259,17 +497,44 @@ namespace Iaido_Katana
         // both arms into the stance. attachPos and attachRot are the sword attach point's place in the right hand,
         // handScale the right hand's world scale
         internal static void Solve(Vector3 rootPos, Quaternion rootRot, StanceSettings s, ref Arm right, ref Arm left,
-            Vector3 attachPos, Quaternion attachRot, float handScale)
+            Vector3 attachPos, Quaternion attachRot, float handScale, ElbowMemory memory = null)
         {
+            var body = new Torso(rootPos, rootRot, s);
             Sword(rootPos, rootRot, s, out var grip, out var attach, out var blade);
             var hand = QMath.Mul(attach, QMath.Conj(attachRot));
-            var wrist = grip - QMath.Rotate(hand, attachPos * handScale);
-            TwoBone(ref right, wrist, rootPos + QMath.Rotate(rootRot, s.RightElbow));
-            right.Hand = hand;
+            var fist = attachPos * handScale;
+            var wrist = grip - QMath.Rotate(hand, fist);
+            var rightPole = rootPos + QMath.Rotate(rootRot, s.RightElbow);
+            var rightBend = Swivel(right, wrist, hand, rightPole, RightRig, s.RightNatural, body);
+            if (memory != null) rightBend = Limit(rightBend, QMath.Norm(wrist - right.Shoulder), rootRot, memory, ref memory.Right);
+            Reach(ref right, wrist, right.Shoulder + rightBend, hand, RightRig);
 
-            // the left palm, not the wrist, goes onto the blade
+            // the left fist round the scabbard's mouth (or the blade, or the handle behind the right hand): the thumb
+            // toward the guard on the scabbard, toward the tip on the handle. the hand turns about the scabbard to meet
+            // its forearm, the elbow points where that arm is most natural, a few rounds to settle both
             var leftTarget = LeftTarget(rootPos, rootRot, grip, blade, s);
-            TwoBone(ref left, leftTarget - QMath.Norm(leftTarget - left.Shoulder) * PalmReach, rootPos + QMath.Rotate(rootRot, s.LeftElbow));
+            var mouth = s.MouthAxis == Vector3.zero ? blade : QMath.Rotate(rootRot, s.MouthAxis);
+            float on = Mathf.Clamp01(s.LeftOnBlade);
+            var thumb = mouth * -(1f - on) + blade * (s.LeftAlongBlade < 0f ? on : -on);
+            thumb = QMath.Length(thumb) > 0.2f ? QMath.Norm(thumb) : blade;
+            var leftPole = rootPos + QMath.Rotate(rootRot, s.LeftElbow);
+            Elbow(left, leftTarget, leftPole, out var leftElbow, out _, out _);
+            var leftWrist = leftTarget;
+            var bend = Vector3.zero;
+            for (int i = 0; i < 3; i++)
+            {
+                leftWrist = leftTarget - QMath.Rotate(Holding(thumb, leftTarget - leftElbow, LeftRig), fist);
+                bend = Swivel(left, leftWrist, left.Hand, leftPole, LeftRig, s.LeftNatural, body, thumb, grip - blade * 0.33f, grip + blade * KatanaLength);
+                Elbow(left, leftWrist, left.Shoulder + bend, out leftElbow, out leftWrist, out _);
+            }
+            if (memory != null)
+            {
+                bend = Limit(bend, QMath.Norm(leftWrist - left.Shoulder), rootRot, memory, ref memory.Left);
+                Elbow(left, leftWrist, left.Shoulder + bend, out leftElbow, out leftWrist, out _);
+                memory.Has = true;
+            }
+            var leftHand = Holding(thumb, leftWrist - leftElbow, LeftRig);
+            Reach(ref left, leftTarget - QMath.Rotate(leftHand, fist), left.Shoulder + bend, leftHand, LeftRig);
         }
     }
 
@@ -288,14 +553,23 @@ namespace Iaido_Katana
             internal bool Stance;
         }
 
-        // yaw keeps counting past 360 so the blade swings the short way: back left, left, front, right
+        // yaw keeps counting past 360 so the blade swings the short way: back left, left, front. the arm sweeps out
+        // to the right and the blade ends pointing ahead: with the palm down a real wrist can not point it further
+        // right. the palm stays down all through, like in the stance, so the forearm never rolls over (the user's
+        // drawing of 11 Oct, found by StancePreview tune with natural arms)
         private static readonly Key[] Keys =
         {
             new Key { Time = 0f, Stance = true },
-            new Key { Time = 0.05f, Grip = new Vector3(0f, 1.26f, 0.5f), Yaw = 320f, Pitch = -5f, Roll = -90f, Twist = -25f, Lean = 10f, Left = 0f },
-            new Key { Time = 0.10f, Grip = new Vector3(0.12f, 1.28f, 0.46f), Yaw = 380f, Pitch = -3f, Roll = -90f, Twist = -8f, Lean = 12f, Left = 0f },
-            new Key { Time = 0.15f, Grip = new Vector3(0.34f, 1.25f, 0.28f), Yaw = 445f, Pitch = 5f, Roll = -90f, Twist = 18f, Lean = 10f, Left = 0f },
-            new Key { Time = Length, Grip = new Vector3(0.34f, 1.25f, 0.28f), Yaw = 445f, Pitch = 5f, Roll = -90f, Twist = 18f, Lean = 10f, Left = 0f },
+            new Key { Time = 0.05f, Grip = new Vector3(0.35f, 1.05f, 0.25f), Yaw = 310f, Pitch = -10f, Roll = -119f, Twist = -28f, Lean = 10f, Left = 0f },
+            new Key { Time = 0.12f, Grip = new Vector3(0.6f, 1.05f, 0.15f), Yaw = 340f, Pitch = -5f, Roll = -115f, Twist = -8f, Lean = 12f, Left = 0f },
+            Held(0.15f),
+            Held(Length),
+        };
+
+        // held out to the right after the cut (zanshin), the arm a little bent and angled down
+        private static Key Held(float time) => new Key
+        {
+            Time = time, Grip = new Vector3(0.65f, 1.06f, -0.1f), Yaw = 345f, Pitch = 3f, Roll = -133f, Twist = 1f, Lean = 12f, Left = 0f
         };
 
         // the pose t seconds into the slash, written into "into". stance is the player's stance settings
@@ -315,7 +589,9 @@ namespace Iaido_Katana
             into.SpineLean = a.Lean + (b.Lean - a.Lean) * u;
             into.LeftOnBlade = a.Left + (b.Left - a.Left) * u;
             into.LeftAlongBlade = stance.LeftAlongBlade;
-            into.LeftHand = stance.LeftHand;
+            // off the blade the left hand keeps hold of the scabbard's mouth, it does not let go of it in the draw
+            into.LeftHand = Moves.Mouth(stance);
+            into.MouthAxis = Moves.MouthAxis(stance);
             into.HeadForward = stance.HeadForward;
             into.RightElbow = stance.RightElbow;
             into.LeftElbow = stance.LeftElbow;
@@ -349,27 +625,30 @@ namespace Iaido_Katana
             internal Vector3 Grip;
         }
 
-        // the crouch's sheathed stance, lower and leaning further than the normal one
+        // the crouch's sheathed stance, lower and leaning further than the normal one, the right elbow bent and the
+        // wrist straight (11 Oct, StancePreview tune with natural arms on the crouch)
         private static Key Crouched(StanceSettings stance) => new Key
         {
-            Grip = stance.Grip + new Vector3(0.02f, -0.04f, 0.12f), Yaw = stance.BladeYaw, Pitch = stance.BladePitch - 24f,
-            Roll = stance.EdgeRoll, Twist = stance.SpineTwist - 8f, Lean = stance.SpineLean + 40f, Left = 1f
+            Grip = stance.Grip + new Vector3(-0.1f, -0.17f, 0.26f), Yaw = stance.BladeYaw - 15f, Pitch = stance.BladePitch - 11f,
+            Roll = stance.EdgeRoll - 5f, Twist = stance.SpineTwist + 3f, Lean = stance.SpineLean + 35f, Left = 1f
         };
 
-        // the cut, after the prep: draw, across the front, out to the right and held low there
+        // the cut, after the prep: draw, across the front, out to the right and held low there, the blade ahead. the
+        // palm stays down all through like the parry's slash, so the forearm never rolls over
         private static readonly Key[] CutKeys =
         {
-            new Key { Time = 0.03f, Grip = new Vector3(0.04f, 1.26f, 0.64f), Yaw = 320f, Pitch = -8f, Roll = -90f, Twist = -25f, Lean = 35f, Left = 0f },
-            new Key { Time = 0.07f, Grip = new Vector3(0.22f, 1.26f, 0.7f), Yaw = 385f, Pitch = -6f, Roll = -90f, Twist = 5f, Lean = 32f, Left = 0f },
-            new Key { Time = Cut, Grip = new Vector3(0.55f, 1.18f, 0.4f), Yaw = 455f, Pitch = 8f, Roll = -90f, Twist = 28f, Lean = 35f, Left = 0f },
+            new Key { Time = 0.03f, Grip = new Vector3(0.4f, 1.075f, 0.35f), Yaw = 305f, Pitch = -10f, Roll = -128f, Twist = -15f, Lean = 40f, Left = 0f },
+            new Key { Time = 0.07f, Grip = new Vector3(0.615f, 0.95f, 0.305f), Yaw = 341f, Pitch = -8f, Roll = -126f, Twist = 10f, Lean = 36f, Left = 0f },
+            new Key { Time = Cut, Grip = new Vector3(0.58f, 1.015f, -0.085f), Yaw = 353f, Pitch = 10f, Roll = -130f, Twist = 30f, Lean = 38f, Left = 0f },
         };
 
         // half way through the sheathing: the blade in front, lifted over the front knee, on its way to the left
         private static readonly Vector3 CrouchLeftElbow = new Vector3(-0.6f, 1f, 0.4f); // the left elbow out over the knee, off the scabbard
-        private const float SheatheOut = 0.35f; // how far out of the scabbard the blade is laid along it before sliding in
+        private const float CrouchLeftAlong = 0.4f; // in the crouch the left hand holds the scabbard lower down, where the bent arm reaches it
+        private const float SheatheOut = 0.2f; // how far out of the scabbard the blade is laid along it before sliding in (the crouched arm reaches no further)
         private static readonly Key SheatheMid = new Key
         {
-            Grip = new Vector3(0.04f, 1.24f, 0.66f), Yaw = 300f, Pitch = -18f, Roll = -45f, Twist = -20f, Lean = 30f, Left = 0f
+            Grip = new Vector3(0.31f, 1.01f, 0.74f), Yaw = 280f, Pitch = -18.5f, Roll = -115f, Twist = -10f, Lean = 35f, Left = 0f
         };
 
         // the pose t seconds in, written into "into", and how far down the crouch is (0 standing, 1 full crouch)
@@ -453,11 +732,13 @@ namespace Iaido_Katana
             into.SpineTwist = a.Twist + (b.Twist - a.Twist) * u;
             into.SpineLean = a.Lean + (b.Lean - a.Lean) * u;
             into.LeftOnBlade = a.Left + (b.Left - a.Left) * u;
-            into.LeftAlongBlade = stance.LeftAlongBlade;
+            // the left hand moves to its crouched hold as the body sinks, and back as it rises
+            into.LeftAlongBlade = stance.LeftAlongBlade + (CrouchLeftAlong - stance.LeftAlongBlade) * crouch;
             // off the blade, the left hand holds the scabbard's mouth where the crouch leaves it (saya biki)
             var sheath = new StanceSettings { Grip = low.Grip, BladeYaw = low.Yaw, BladePitch = low.Pitch, EdgeRoll = low.Roll };
             StanceSolver.Sword(Vector3.zero, new Quaternion(0f, 0f, 0f, 1f), sheath, out var sheathGrip, out _, out var sheathBlade);
-            into.LeftHand = sheathGrip + sheathBlade * stance.LeftAlongBlade;
+            into.LeftHand = sheathGrip + sheathBlade * CrouchLeftAlong;
+            into.MouthAxis = sheathBlade;
             into.HeadForward = stance.HeadForward;
             into.RightElbow = stance.RightElbow;
             into.LeftElbow = CrouchLeftElbow;
@@ -501,7 +782,7 @@ namespace Iaido_Katana
         internal static readonly float[] HitTimes = { 0.604f, 0.492f, 0.639f };
         internal const float NotoBase = 1.5f;    // the sheathing's length its keys are written for
         internal const float NotoClick = 1.45f;  // the guard meets the scabbard here
-        internal const float NotoOut = 0.55f;     // how much of the blade is still out when it is laid along the scabbard
+        internal const float NotoOut = 0.35f;     // how much of the blade is still out when it is laid along the scabbard
 
         private const float TwoHands = -0.2f;   // the left hand on the handle, behind the right one
         // the blade's curve as a circle (meters, the flametal's is a little tighter than the steel's), from where it
@@ -572,13 +853,15 @@ namespace Iaido_Katana
         // after fighting: a flick out to the right (chiburi), the blade brought forward and across the front to the left,
         // laid along the scabbard (noto) and slid in slowly until the guard meets it. it goes round the front of the body,
         // never down past the legs
+        // (11 Oct: every key found by StancePreview tune with natural arms, the palm down all through like in the stance
+        // and the slash, so the forearm never rolls over)
         private static readonly Key[] Noto =
         {
-            new Key { Time = 0.12f, Grip = new Vector3(0.34f, 1.32f, 0.48f), Blade = new Vector3(0.55f, 0.25f, 0.8f), Edge = new Vector3(0.1f, -1f, 0.25f), Twist = 10f, Lean = 10f },
-            new Key { Time = 0.25f, Grip = new Vector3(0.42f, 1.2f, 0.34f), Blade = new Vector3(0.8f, -0.4f, 0.45f), Edge = new Vector3(0.35f, -0.9f, 0.1f), Twist = 10f, Lean = 10f },
-            new Key { Time = 0.5f, Grip = new Vector3(0.42f, 1.2f, 0.34f), Blade = new Vector3(0.8f, -0.4f, 0.45f), Edge = new Vector3(0.35f, -0.9f, 0.1f), Twist = 10f, Lean = 10f },
-            new Key { Time = 0.65f, Grip = new Vector3(0.22f, 1.28f, 0.47f), Blade = new Vector3(0.45f, -0.15f, 1f), Edge = new Vector3(0.9f, 0f, -0.4f), Twist = -15f, Lean = 14f },
-            new Key { Time = 0.8f, Grip = new Vector3(0.1f, 1.28f, 0.5f), Yaw = 300f, Pitch = 0f, Roll = 0f, Twist = -34f, Lean = 14f },
+            new Key { Time = 0.12f, Grip = new Vector3(0.75f, 1.3f, 0f), Yaw = -20f, Pitch = -65f, Roll = -79f, Twist = 15f, Lean = 12f },
+            new Key { Time = 0.25f, Grip = new Vector3(0.64f, 1.05f, -0.1f), Yaw = -20f, Pitch = 12f, Roll = -136f, Twist = 0f, Lean = 14f },
+            new Key { Time = 0.5f, Grip = new Vector3(0.64f, 1.05f, -0.1f), Yaw = -20f, Pitch = 12f, Roll = -136f, Twist = 0f, Lean = 14f },
+            new Key { Time = 0.65f, Grip = new Vector3(0.5f, 1.05f, 0.37f), Yaw = -55f, Pitch = -5f, Roll = -124f, Twist = -25f, Lean = 14f },
+            new Key { Time = 0.8f, Grip = new Vector3(0.25f, 1.4f, 0.61f), Yaw = 243f, Pitch = 0f, Roll = -92f, Twist = -40f, Lean = 10f },
             new Key { Time = 0.98f, Sheath = true, Out = NotoOut, Twist = -12f, Lean = 12f },
             new Key { Time = NotoClick, Sheath = true, Lean = 3f },
             new Key { Time = NotoBase, Sheath = true },
@@ -799,6 +1082,9 @@ namespace Iaido_Katana
             return sheath.Grip + QMath.Rotate(sheath.Rot, new Vector3(0f, 0f, 1f)) * stance.LeftAlongBlade;
         }
 
+        // the scabbard's way from its mouth to the tip, in the player's frame
+        internal static Vector3 MouthAxis(StanceSettings stance) => QMath.Rotate(Scabbard(stance).Rot, new Vector3(0f, 0f, 1f));
+
         private static void Write(Pose p, StanceSettings stance, StanceSettings into)
         {
             into.Grip = p.Grip;
@@ -808,6 +1094,7 @@ namespace Iaido_Katana
             into.LeftOnBlade = p.Left;
             into.LeftAlongBlade = p.Along;
             into.LeftHand = Mouth(stance);
+            into.MouthAxis = MouthAxis(stance);
             into.HeadForward = stance.HeadForward;
             into.RightElbow = stance.RightElbow;
             into.LeftElbow = stance.LeftElbow;

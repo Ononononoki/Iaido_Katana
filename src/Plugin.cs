@@ -20,7 +20,7 @@ namespace Iaido_Katana
     {
         public const string ModGuid = "onononoki.Iaido_Katana";
         public const string ModName = "Iaido_Katana";
-        public const string ModVersion = "0.1.0";
+        public const string ModVersion = "0.1.1";
 
         internal static ManualLogSource Log;
         internal static ConfigEntry<bool> CounterEnabled;
@@ -107,6 +107,7 @@ namespace Iaido_Katana
         internal static ConfigEntry<float> StanceTwist;
         internal static ConfigEntry<float> StanceLean;
         internal static ConfigEntry<float> StanceLeftHand;
+        internal static ConfigEntry<float> StanceSpineHold;
         internal static ConfigEntry<bool> StanceSlash;
         internal static ConfigEntry<bool> StanceReady;
         internal static ConfigEntry<bool> StanceReadyRunning;
@@ -276,7 +277,7 @@ namespace Iaido_Katana
             // the stance only turns bones on your screen, for every player you see, so each player sets it for themselves
             var stance = new StanceSettings();
             StanceEnabled = Config.Bind("Stance", "Enabled", true,
-                "Iai stance with a katana: the upper body turns left and the sword is held at the left hip, edge up, like a sword in its scabbard. Shown on every player you see.");
+                "Iai stance with a katana: the upper body turns left, the right hand rests on the grip and the left hand holds the scabbard at the left hip. Shown on every player you see.");
             StanceReady = Config.Bind("Stance", "ReadyIdle", true,
                 "Rest in the stance whenever a katana is in the hand and you stand or walk (and run, with ReadyWhileRunning), so it sits in its scabbard. Swings, dodges and emotes leave it on their own. Off: only while blocking.");
             StanceReadyRunning = Config.Bind("Stance", "ReadyWhileRunning", true,
@@ -308,7 +309,18 @@ namespace Iaido_Katana
             StanceLean = Config.Bind("Stance", "Lean", stance.SpineLean,
                 new ConfigDescription("Forward lean of the upper body, degrees.", new AcceptableValueRange<float>(-20f, 40f)));
             StanceLeftHand = Config.Bind("Stance", "LeftHandOnBlade", stance.LeftAlongBlade,
-                new ConfigDescription("Where the left hand holds the blade, meters from the right hand, where the scabbard mouth would be.", new AcceptableValueRange<float>(0.08f, 0.5f)));
+                new ConfigDescription("Where the left hand holds the scabbard, meters along it from the right hand (the mouth is at about 0.12).", new AcceptableValueRange<float>(0.08f, 0.5f)));
+            StanceSpineHold = Config.Bind("Stance", "SpineHold", 0.8f,
+                new ConfigDescription("How much the stance holds the upper body upright over the game's idle, walk and run, which hunch it forward. 1 holds it fully, so the hands sit exactly where the stance puts them. 0 leaves the game's.", new AcceptableValueRange<float>(0f, 1f)));
+            // the stance changed in 0.1.1: values still at 0.1.0's defaults move to the new ones, changed ones stay
+            Renew(StanceGripSide, -0.1f);
+            Renew(StanceGripHeight, 1.14f);
+            Renew(StanceGripForward, 0.2f);
+            Renew(StanceBladeYaw, 228f);
+            Renew(StanceBladePitch, 24f);
+            Renew(StanceTwist, -32f);
+            Renew(StanceLean, 10f);
+            Renew(StanceLeftHand, 0.15f);
             DumpAnimationClips = Config.Bind("Debug", "DumpAnimationClips", false,
                 "Write the names of all player animation clips and the playing states to the log once, for making replacement animations.");
             LogCounters = Config.Bind("Debug", "LogCounters", false,
@@ -318,6 +330,12 @@ namespace Iaido_Katana
             PrefabManager.OnVanillaPrefabsAvailable += AddItems;
             new Harmony(ModGuid).PatchAll(Assembly.GetExecutingAssembly());
             Logger.LogInfo($"{ModName} {ModVersion} loaded");
+        }
+
+        // a setting still at an old default takes the new default
+        private static void Renew(ConfigEntry<float> entry, float oldDefault)
+        {
+            if (Mathf.Abs(entry.Value - oldDefault) < 1e-4f) entry.Value = (float)entry.DefaultValue;
         }
 
         private void AddItems()

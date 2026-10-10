@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1 (beta)
+
+- Natural arm poses in the stance, the parry, the sheathing and the Thunderclap.
+- The katana stays sheathed through a roll.
+- New setting `Stance.SpineHold`. Old default stance settings update on their own.
+- GitHub link for feedback and bug reports.
+
 ## 0.1.0 (beta)
 
 - First public test version, work in progress.

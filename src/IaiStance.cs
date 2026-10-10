@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Runtime.CompilerServices;
 using HarmonyLib;
 using UnityEngine;
@@ -49,6 +50,7 @@ namespace Iaido_Katana
         private const float BodyIn = 0.12f, BodyOut = 0.25f;
         private const float SettleSeconds = 0.2f; // the sheathed blade and its scabbard settling into the stance
         private const float FollowEase = 0.1f;    // the scabbard taking up the sliding blade
+        private const float ElbowTurnSpeed = 900f; // degrees a second an elbow may swing round the arm's line
         private static readonly CrouchSettings Footing = new CrouchSettings();
         private static readonly Quaternion[] KeptBody = new Quaternion[RFoot - HipsBone + 1];
 
@@ -114,6 +116,10 @@ namespace Iaido_Katana
             internal int ThunderStage;         // 0 gathering, 1 cutting, 2 holding and sheathing, 3 sheathed
             internal Vector3 AnimatedHips;     // the hips' place from the animator, and what the crouch wrote
             internal Vector3 WrittenHips;
+            internal readonly StanceSolver.ElbowMemory Elbows = new StanceSolver.ElbowMemory(); // the elbows turn smoothly
+            internal bool RollSheathed;        // the katana rests in the scabbard through a roll
+            internal GameObject HiddenHand;    // the katana in the hand, hidden meanwhile
+            internal float SpineLogAt;         // the next debug line of the animator's spine
         }
 
         // the local player started the thunderclap: pose it here and tell the other clients
@@ -191,6 +197,55 @@ namespace Iaido_Katana
         {
             if (s.Saya) s.Saya.SetActive(false);
             RestoreBack(s);
+            if (s.HiddenHand) s.HiddenHand.SetActive(true);
+            s.HiddenHand = null;
+            s.RollSheathed = false;
+        }
+
+        // the katana in the hand hidden while it rests in the scabbard through a roll, and shown again after
+        private static void HideHand(Player player, State s, bool hide)
+        {
+            var hand = hide ? HandInstance(VisOf(player)) : null;
+            if (hand)
+            {
+                if (hand.activeSelf) hand.SetActive(false);
+                s.HiddenHand = hand;
+                return;
+            }
+            if (s.HiddenHand) s.HiddenHand.SetActive(true);
+            s.HiddenHand = null;
+        }
+
+        // the game's tag on its dodge states, hashed on first use (unity's hash only runs inside the game)
+        private static int _dodgeTag;
+        private static int DodgeTag => _dodgeTag != 0 ? _dodgeTag : _dodgeTag = Animator.StringToHash("dodge");
+
+        // the player is rolling: the animator plays the dodge. every client sees this, unlike Player.InDodge, which
+        // only the player's own client knows
+        private static bool Rolling(Player player)
+        {
+            var animator = AnimatorOf(player);
+            if (!animator) return false;
+            return animator.GetCurrentAnimatorStateInfo(0).tagHash == DodgeTag
+                   || animator.IsInTransition(0) && animator.GetNextAnimatorStateInfo(0).tagHash == DodgeTag;
+        }
+
+        // with Debug.DumpAnimationClips on: the animator's spine for the local player every 2 s, as turns from rest
+        // (degrees about x, y, z) and the hips' height, to fit the offline checks to the game's idle, walk and run
+        private static void LogSpine(Player player, State s)
+        {
+            s.SpineLogAt = Time.time + 2f;
+            string Turn(Quaternion rest, Quaternion animated)
+            {
+                var e = (Quaternion.Inverse(rest) * animated).eulerAngles;
+                float W(float a) => a > 180f ? a - 360f : a;
+                return $"({W(e.x):0}, {W(e.y):0}, {W(e.z):0})";
+            }
+            var animator = AnimatorOf(player);
+            animator.GetCurrentAnimatorClipInfo(0, ClipBuffer);
+            string clips = string.Join("+", ClipBuffer.Where(c => c.clip).Select(c => c.clip.name));
+            Plugin.Log.LogInfo($"spine: Spine {Turn(RestSpine, s.Animated[SpineLow])} Spine1 {Turn(RestSpine1, s.Animated[Spine1])} Spine2 {Turn(RestSpine2, s.Animated[Spine2])}"
+                               + $" Neck {Turn(RestNeck, s.Animated[Neck])} hips {s.AnimatedHips.y * 100f:0.00} | {clips}");
         }
 
         private static void RestoreBack(State s)
@@ -218,6 +273,7 @@ namespace Iaido_Katana
         private static void UpdateSaya(Player player, State s, bool katana, int back)
         {
             bool holster = !katana && back != 0 && Plugin.HolsterOn.Value;
+            bool rolled = katana && s.RollSheathed && s.HasHip;
             if (!(katana || holster) || !Plugin.StanceEnabled.Value || !Plugin.ScabbardOn.Value || player.IsDead())
             {
                 HideSaya(s);
@@ -252,7 +308,7 @@ namespace Iaido_Katana
                 s.SayaItem = item;
             }
             s.Saya.SetActive(true);
-            s.Sheathed.SetActive(holster);
+            s.Sheathed.SetActive(holster || rolled);
 
             // put away: the game's katana on the back is hidden, this one lies in the scabbard
             var putAway = holster ? BackInstance(VisOf(player)) : null;
@@ -281,7 +337,7 @@ namespace Iaido_Katana
             var origin = s.Hips.position - QMath.Rotate(root, StanceSolver.RestHips);
             Vector3 grip;
             Quaternion attach;
-            if (holster && s.HasHip)
+            if ((holster || rolled) && s.HasHip)
             {
                 grip = s.Hips.position + QMath.Rotate(s.Hips.rotation, s.HipPos);
                 attach = QMath.Mul(s.Hips.rotation, s.HipRot);
@@ -561,6 +617,7 @@ namespace Iaido_Katana
             }
             if (s.Broken || !Bind(player, s)) return;
             StepPose(player, s, katana);
+            HideHand(player, s, katana && s.RollSheathed);
             UpdateSaya(player, s, katana, back);
             UpdateCrackle(s, katana);
             DrawTrail(player, s, katana);
@@ -618,9 +675,10 @@ namespace Iaido_Katana
             else if (s.WasAttacking)
             {
                 s.WasAttacking = false;
-                if (alive && !player.InDodge() && !thunder && !slashing && s.Move == 0) StartSheathe(player, s, 0f);
+                if (alive && !Rolling(player) && !thunder && !slashing && s.Move == 0) StartSheathe(player, s, 0f);
             }
-            if (s.Move == 2) StepSheathe(player, s, alive && !player.IsBlocking() && !player.InDodge() && !thunder && !slashing && !attacking);
+            bool rolling = alive && Rolling(player);
+            if (s.Move == 2) StepSheathe(player, s, alive && !player.IsBlocking() && !rolling && !thunder && !slashing && !attacking);
             bool moving = s.Move != 0;
             bool bladeOut = slashing || moving || (thunder && thunderTime >= s.ThunderPrep && thunderTime < Thunder.SheathedAt(s.ThunderPrep));
 
@@ -633,13 +691,17 @@ namespace Iaido_Katana
             s.Body = thunder ? 0f : Mathf.MoveTowards(s.Body, bodyWant, Time.deltaTime / (bodyWant > s.Body ? BodyIn : BodyOut));
 
             // the stance: while blocking, during the katana's own moves, or at rest on the idle and walk clips
-            bool free = alive && !player.InAttack() && !player.InDodge();
+            bool free = alive && !player.InAttack() && !rolling;
             bool want = moving || (free && (thunder || player.IsBlocking() || (Plugin.StanceReady.Value && ReadyPose(AnimatorOf(player)))));
 
             // a block snaps into the stance, sheathing after a swing or when coming to rest takes its time
             float blendIn = moving || (free && (player.IsBlocking() || thunder)) ? Plugin.StanceBlendIn.Value : Plugin.StanceSheathe.Value;
             float blend = want ? blendIn : Plugin.StanceBlendOut.Value;
             s.Weight = bladeOut ? 1f : Mathf.MoveTowards(s.Weight, want ? 1f : 0f, blend > 0f ? Time.deltaTime / blend : 1f);
+            // a roll leaves the katana in its scabbard (the hand lets go of it), until the stance has the hand on the
+            // grip again, or a swing or a move takes it
+            if (rolling && s.HasHip && Plugin.ScabbardOn.Value) s.RollSheathed = true;
+            else if (s.RollSheathed && (!alive || bladeOut || attacking || !want || s.Weight >= 0.99f)) s.RollSheathed = false;
 
             // the animator runs in the physics step, so some frames it does not write. a bone that still holds what was
             // written here last frame keeps the animator pose saved before
@@ -651,6 +713,7 @@ namespace Iaido_Katana
             var hips = s.Hips.localPosition;
             if (!s.HasWritten || hips != s.WrittenHips) s.AnimatedHips = hips;
 
+            if (Plugin.DumpAnimationClips.Value && player == Player.m_localPlayer && Time.time >= s.SpineLogAt) LogSpine(player, s);
             if (s.Weight <= 0f)
             {
                 if (s.HasWritten)
@@ -661,6 +724,7 @@ namespace Iaido_Katana
                 s.HasWritten = false;
                 s.HasLast = false;
                 s.Body = 0f;
+                s.Elbows.Has = false;
                 return;
             }
 
@@ -771,6 +835,15 @@ namespace Iaido_Katana
                 b[Spine2].localRotation = RestSpine2;
                 b[Neck].localRotation = RestNeck;
             }
+            else
+            {
+                // the game's idle, walk and run hunch the upper body forward, and the arms were made on the spine at rest:
+                // the stance holds it that way by SpineHold, so the hands land where they were made to
+                float hold = Mathf.Clamp01(Plugin.StanceSpineHold.Value);
+                b[SpineLow].localRotation = QMath.Nlerp(b[SpineLow].localRotation, RestSpine, hold);
+                b[Spine1].localRotation = QMath.Nlerp(b[Spine1].localRotation, RestSpine1, hold);
+                b[Spine2].localRotation = QMath.Nlerp(b[Spine2].localRotation, RestSpine2, hold);
+            }
             if (body > 0f)
             {
                 // the greatsword swing under the cut twists and bends the hips, so they and the legs start from rest
@@ -801,7 +874,8 @@ namespace Iaido_Katana
             var right = ArmOf(b[RArm], b[RFore], b[RHand]);
             var left = ArmOf(b[LArm], b[LFore], b[LHand]);
             var origin = s.Hips.position - QMath.Rotate(root, StanceSolver.RestHips);
-            StanceSolver.Solve(origin, root, Settings, ref right, ref left, s.Attach.localPosition, s.Attach.localRotation, b[RHand].lossyScale.x);
+            s.Elbows.MaxTurn = ElbowTurnSpeed * Time.deltaTime;
+            StanceSolver.Solve(origin, root, Settings, ref right, ref left, s.Attach.localPosition, s.Attach.localRotation, b[RHand].lossyScale.x, s.Elbows);
             b[RArm].rotation = right.Upper;
             b[RFore].rotation = right.Lower;
             b[RHand].rotation = right.Hand;
@@ -855,10 +929,14 @@ namespace Iaido_Katana
             to.LeftOnBlade = from.LeftOnBlade;
             to.LeftAlongBlade = from.LeftAlongBlade;
             to.LeftHand = from.LeftHand;
+            to.MouthAxis = from.MouthAxis;
+            to.RightElbow = from.RightElbow; // the thunderclap's crouch has its own left elbow
+            to.LeftElbow = from.LeftElbow;
             to.Attach = from.Attach;
         }
 
-        private static readonly Vector3 DefaultLeftHand = new StanceSettings().LeftHand;
+        private static readonly StanceSettings Defaults = new StanceSettings();
+        private static readonly Vector3 DefaultLeftHand = Defaults.LeftHand;
 
         // the stance from the config, read every frame so changes show at once
         private static void ReadSettings(StanceSettings into)
@@ -866,7 +944,10 @@ namespace Iaido_Katana
             into.Attach = null;
             into.SheathAt = null;
             into.LeftHand = DefaultLeftHand;
-            into.EdgeRoll = 0f;
+            into.MouthAxis = Vector3.zero;
+            into.RightElbow = Defaults.RightElbow;
+            into.LeftElbow = Defaults.LeftElbow;
+            into.EdgeRoll = Defaults.EdgeRoll;
             into.LeftOnBlade = 1f;
             into.Grip = new Vector3(Plugin.StanceGripSide.Value, Plugin.StanceGripHeight.Value, Plugin.StanceGripForward.Value);
             into.BladeYaw = Plugin.StanceBladeYaw.Value;
