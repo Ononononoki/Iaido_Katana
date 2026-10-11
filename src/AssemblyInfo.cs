@@ -3,8 +3,8 @@ using System.Runtime.CompilerServices;
 
 [assembly: AssemblyTitle("Iaido_Katana")]
 [assembly: AssemblyDescription("A two-handed katana for Valheim that strikes back on a perfect parry")]
-[assembly: AssemblyVersion("0.1.1.0")]
-[assembly: AssemblyFileVersion("0.1.1.0")]
+[assembly: AssemblyVersion("0.1.2.0")]
+[assembly: AssemblyFileVersion("0.1.2.0")]
 
 // lets the offline check in test\KatanaCheck call the internal helpers
 [assembly: InternalsVisibleTo("KatanaCheck")]

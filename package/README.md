@@ -15,18 +15,22 @@
 
 ## Flametal Katana (Ashlands)
 
-Its own curved Flametal shape. Costs 50 Flametal, 20 Ashwood, 2 Celestial Feather, 5 Asksvin Hide and 1 Iolite at the Black Forge (level 3).
+Its own curved Flametal shape, with lightning along the edge.
 
 **Thunderclap.** The heavy attack crouches for 2.25 seconds while lightning gathers, then draws and dashes 13 meters through your enemies. Each one takes 10 times the katana's damage, and nothing hits you during the dash. It costs 100 stamina.
 
-## Crafting and stats
+## Crafting
 
-| Steel Katana level | Cost | Forge level |
+| Katana | Cost | Station |
 |---|---|---|
-| 1 | 50 Iron, 100 Coal, 20 Fine Wood, 5 Black Metal, 10 Linen Thread | 4 |
-| 2 | 10 Iron, 20 Coal, 3 Black Metal, 3 Linen Thread | 5 |
-| 3 | 20 Iron, 40 Coal, 6 Black Metal, 6 Linen Thread | 6 |
-| 4 | 40 Iron, 80 Coal, 12 Black Metal, 12 Linen Thread | 7 |
+| Steel Katana | 50 Iron, 100 Coal, 20 Fine Wood, 10 Linen Thread | Forge level 4 |
+| Flametal Katana | 50 Flametal, 20 Ashwood, 5 Asksvin Hide, 1 Iolite | Black Forge level 3 |
+
+Upgrades per level: Steel 10 Iron, 20 Coal, 3 Linen Thread. Flametal 10 Flametal, 2 Asksvin Hide (twice that for level 3, four times for level 4).
+
+Both katanas can be refined past level 4 at the Forge of Potential with a Battle Idol (Black Metal for the Steel Katana, Flametal for the Flametal Katana), like the game's own swords.
+
+## Stats
 
 | | Steel Katana | Flametal Katana | Black Metal sword |
 |---|---|---|---|
@@ -46,7 +50,8 @@ The file is `BepInEx/config/onononoki.Iaido_Katana.cfg`. Gameplay settings are s
 | `Parry.NormalWindowMs` | 200 | Katana parry window outside precise mode |
 | `Thunderclap.Distance` | 13 | Dash length in meters |
 | `Thunderclap.DamageMultiplier` | 10 | Damage to each creature on the way |
-| `Stance.*`, `Impact.*`, `Visual.*`, `Swing.*` | | Yours. Stance, impact frame, effects and swing timing |
+| `Stance.*`, `Impact.*`, `Visual.*` | | Yours. Stance, impact frame and effects |
+| `Swing.*` | | Swing timing is yours, the swing animations come from the server |
 
 ## Installation and compatibility
 

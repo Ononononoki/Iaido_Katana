@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using BepInEx;
@@ -20,7 +21,7 @@ namespace Iaido_Katana
     {
         public const string ModGuid = "onononoki.Iaido_Katana";
         public const string ModName = "Iaido_Katana";
-        public const string ModVersion = "0.1.1";
+        public const string ModVersion = "0.1.2";
 
         internal static ManualLogSource Log;
         internal static ConfigEntry<bool> CounterEnabled;
@@ -60,6 +61,9 @@ namespace Iaido_Katana
         // by its name, like Katana.IsKatana: in the game an item in the inventory can carry a copy of its prefab's data
         internal static bool IsFlametal(ItemDrop.ItemData item) => item?.m_shared != null && item.m_shared.m_name == Katana.FlametalToken;
         internal static ConfigEntry<string> HeavyAnimationFrom;
+        internal static ConfigEntry<bool> UpperBodySwings;
+        internal static ConfigEntry<bool> OneHandedMoves;
+        internal const string UpperSwing = "shovel"; // the game's upper body swing chain (the snow shovel's): shovel0, 1, 2
         internal static ConfigEntry<string> HeavyAnimationSlot;
         internal static ConfigEntry<bool> CounterAnimation;
         internal static ConfigEntry<float> CounterAnimationSpeed;
@@ -157,15 +161,15 @@ namespace Iaido_Katana
                 new ConfigDescription("Counters and reflected hits in precise mode are this much stronger. Swings, the heavy attack and the thunderclap do not change.",
                     new AcceptableValueRange<float>(1f, 2f), sync));
             SwingTimeWarp = Config.Bind("Swing", "TimeWarp", true,
-                "Slow windup and a fast strike for katana swings, with the same time to the hit as vanilla. Only changes how your own swings look.");
+                "Times katana swings so their hit lands when the greatsword's did. With Swing.UpperBody an even pace up to the hit, without it a slow windup and a fast strike. Only changes how your own swings look.");
             WindupShare = Config.Bind("Swing", "WindupShare", 0.5f,
-                new ConfigDescription("Share of the animation before the hit that plays as the slow windup. Must stay below WindupSpeed.", new AcceptableValueRange<float>(0.1f, 0.9f)));
+                new ConfigDescription("Only with Swing.UpperBody off. Share of the animation before the hit that plays as the slow windup. Must stay below WindupSpeed.", new AcceptableValueRange<float>(0.1f, 0.9f)));
             WindupSpeed = Config.Bind("Swing", "WindupSpeed", 0.6f,
-                new ConfigDescription("Animation speed during the windup. The strike speeds up to make up the time (3x with the defaults).", new AcceptableValueRange<float>(0.3f, 1f)));
+                new ConfigDescription("Only with Swing.UpperBody off. Animation speed during the windup. The strike speeds up to make up the time (3x with the defaults).", new AcceptableValueRange<float>(0.3f, 1f)));
             NormalStrikeBoost = Config.Bind("Swing", "NormalStrikeBoost", 1.875f,
-                new ConfigDescription("Makes the strike of normal swings this much faster. The windup slows down so the hit lands at the same moment as vanilla.", new AcceptableValueRange<float>(1f, 3f)));
+                new ConfigDescription("Only with Swing.UpperBody off. Makes the strike of normal swings this much faster. The windup slows down so the hit lands at the same moment as vanilla.", new AcceptableValueRange<float>(1f, 3f)));
             HeavyStrikeBoost = Config.Bind("Swing", "HeavyStrikeBoost", 1.3f,
-                new ConfigDescription("Makes the slash of the heavy attack this much faster. Its raise slows down so the hit lands at the same moment.", new AcceptableValueRange<float>(1f, 3f)));
+                new ConfigDescription("Only for a borrowed heavy motion (HeavyAnimationFrom other than UpperBody). Makes the slash of the heavy attack this much faster. Its raise slows down so the hit lands at the same moment.", new AcceptableValueRange<float>(1f, 3f)));
             HeavyDuration = Config.Bind("Swing", "HeavyDuration", 2f,
                 new ConfigDescription("Total length of the heavy attack in seconds, recovery included. Only the raise changes to fit, the slash keeps its speed. 0 turns this off.", new AcceptableValueRange<float>(0f, 4f)));
             HeavyDamageMultiplier = Config.Bind("Counter", "HeavyDamageMultiplier", 6f,
@@ -181,13 +185,24 @@ namespace Iaido_Katana
             FlametalHeavyStamina = Config.Bind("Counter", "FlametalHeavyStamina", 60f,
                 new ConfigDescription("Stamina cost of the Flametal Katana's heavy attack (HeavyStamina is the Steel Katana's).", new AcceptableValueRange<float>(0f, 100f), sync));
             FlametalHeavyStamina.SettingChanged += (s, e) => ApplyAttackSettings();
+            // which swings the katanas play is set by the server, so every player sees the same, and applied when it arrives.
+            // the katana's own swings and the one-handed movement are experimental, off by default (12 Oct: they felt
+            // weightless and cut off from the body)
+            UpperBodySwings = Config.Bind("Swing", "UpperBody", false,
+                new ConfigDescription("Experimental, work in progress. Katana swings play on the game's upper body animation layer, so the legs keep walking during a swing, and the katana's own cuts show over it. Off: the greatsword swings. Set by the server in multiplayer.", null, sync));
+            OneHandedMoves = Config.Bind("Swing", "OneHandedMoves", false,
+                new ConfigDescription("Experimental, work in progress. The katana uses the one-handed sword's idle, walk, run and block animations (it stays a two-handed weapon). Set by the server in multiplayer.", null, sync));
             HeavyAnimationFrom = Config.Bind("Swing", "HeavyAnimationFrom", "SledgeStagbreaker",
-                "Weapon whose attack animation the heavy attack borrows, by prefab name (for example SledgeStagbreaker, SledgeIron, SledgeDemolisher). Only the motion is borrowed, the hit stays the katana's own slash. Needs a restart.");
+                new ConfigDescription("Weapon whose heavy motion the heavy attack borrows, by prefab name (for example SledgeStagbreaker, SledgeIron), with its own legs. The hit stays the katana's own slash. UpperBody (experimental, with Swing.UpperBody on): the katana's own overhead cut. Set by the server in multiplayer.", null, sync));
             HeavyAnimationSlot = Config.Bind("Swing", "HeavyAnimationSlot", "Secondary",
-                new ConfigDescription("Which of that weapon's attacks to borrow. On the two-handed hammers the secondary is the overhead ground slam. Needs a restart.",
-                    new AcceptableValueList<string>("Secondary", "Primary")));
+                new ConfigDescription("Only for a borrowed heavy motion. Which of that weapon's attacks to borrow. On the two-handed hammers the secondary is the overhead ground slam. Set by the server in multiplayer.",
+                    new AcceptableValueList<string>("Secondary", "Primary"), sync));
+            UpperBodySwings.SettingChanged += (s, e) => ApplyMoveSettings();
+            OneHandedMoves.SettingChanged += (s, e) => ApplyMoveSettings();
+            HeavyAnimationFrom.SettingChanged += (s, e) => ApplyMoveSettings();
+            HeavyAnimationSlot.SettingChanged += (s, e) => ApplyMoveSettings();
             HeavySpeed = Config.Bind("Swing", "HeavySpeed", 1.7f,
-                new ConfigDescription("Speeds up the heavy (secondary) attack up to its hit. The recovery after the hit plays at normal speed.", new AcceptableValueRange<float>(1f, 3f)));
+                new ConfigDescription("Only for a borrowed heavy motion. Speeds up the heavy (secondary) attack up to its hit. The recovery after the hit plays at normal speed.", new AcceptableValueRange<float>(1f, 3f)));
             CounterAnimation = Config.Bind("Swing", "CounterAnimation", true,
                 "Play a fast swing on a parry, and land the counter on its hit moment. A placeholder until the iai animation exists.");
             CounterAnimationSpeed = Config.Bind("Swing", "CounterAnimationSpeed", 5.5f,
@@ -342,13 +357,13 @@ namespace Iaido_Katana
         {
             PrefabManager.OnVanillaPrefabsAvailable -= AddItems;
             if (LogCounters.Value) LogHammerAnimations();
-            AddKatana(Katana.SteelPrefab, "THSwordKrom", Katana.SteelToken, Katana.ApplySteelStats, "steel", SteelTint, "forge", 4, Katana.SteelRecipe);
-            AddKatana(Katana.FlametalPrefab, "THSwordSlayer", Katana.FlametalToken, Katana.ApplyFlametalStats, "flametal", FlametalTint, "blackforge", 3, Katana.FlametalRecipe);
+            AddKatana(Katana.SteelPrefab, "THSwordKrom", Katana.SteelToken, Katana.ApplySteelStats, "steel", SteelTint, "forge", 4, Katana.SteelRecipe, Katana.SteelIdol);
+            AddKatana(Katana.FlametalPrefab, "THSwordSlayer", Katana.FlametalToken, Katana.ApplyFlametalStats, "flametal", FlametalTint, "blackforge", 3, Katana.FlametalRecipe, Katana.FlametalIdol);
         }
 
         // one katana: a clone of a vanilla two-handed sword with katana stats, the borrowed heavy animation and its recipe
         private static void AddKatana(string prefabName, string basePrefab, string token, System.Action<ItemDrop.ItemData.SharedData> applyStats,
-            string look, Color tint, string station, int stationLevel, (string item, int amount, int perLevel)[] recipe)
+            string look, Color tint, string station, int stationLevel, (string item, int amount, int perLevel)[] recipe, string idol)
         {
             var prefab = PrefabManager.Instance.CreateClonedPrefab(prefabName, basePrefab);
             if (!prefab)
@@ -358,16 +373,28 @@ namespace Iaido_Katana
             }
 
             var shared = prefab.GetComponent<ItemDrop>().m_itemData.m_shared;
+            float basePower = shared.m_blockPower; // the base sword's, before the katana's own stats
             applyStats(shared);
+            Katana.BaseBlockPower[token] = basePower;
             KatanaShared.Add(shared);
             if (prefabName == Katana.FlametalPrefab) FlametalShared.Add(shared);
             ApplyAttackSettings();
-            if (!BorrowHeavyAnimation(shared, HeavyAnimationFrom.Value) && HeavyAnimationFrom.Value != "SledgeIron")
-                BorrowHeavyAnimation(shared, "SledgeIron");
+            BaseMoves[shared] = new BaseMoveset
+            {
+                State = shared.m_animationState,
+                Attack = shared.m_attack.m_attackAnimation, AttackChain = shared.m_attack.m_attackChainLevels, AttackRandom = shared.m_attack.m_attackRandomAnimations,
+                Heavy = shared.m_secondaryAttack.m_attackAnimation, HeavyChain = shared.m_secondaryAttack.m_attackChainLevels, HeavyRandom = shared.m_secondaryAttack.m_attackRandomAnimations,
+            };
+            ApplyMoveSettings();
             if (!KatanaModelOn.Value || !KatanaModel.Apply(prefab, look)) Tint(prefab, tint);
 
             foreach (var missing in recipe.Where(x => !PrefabManager.Instance.GetPrefab(x.item)))
                 Log.LogWarning($"{prefabName} recipe: item '{missing.item}' does not exist in this game version");
+
+            bool hasIdol = PrefabManager.Instance.GetPrefab(idol);
+            if (!hasIdol) Log.LogWarning($"{prefabName} recipe: idol '{idol}' does not exist in this game version");
+            var requirements = recipe.Select(r => new RequirementConfig(r.item, r.amount, r.perLevel, true)).ToList();
+            if (hasIdol) requirements.Add(new RequirementConfig(idol, 1, 0, false)); // spent, never given back
 
             var config = new ItemConfig
             {
@@ -375,12 +402,58 @@ namespace Iaido_Katana
                 Description = token + "_desc",
                 CraftingStation = station,
                 MinStationLevel = stationLevel,
-                Requirements = recipe.Select(r => new RequirementConfig(r.item, r.amount, r.perLevel, true)).ToArray()
+                Requirements = requirements.ToArray()
             };
             var icon = RenderManager.Instance.Render(new RenderManager.RenderRequest(prefab) { Rotation = RenderManager.IsometricRotation, UseCache = false });
             if (icon) config.Icons = new[] { icon };
 
-            ItemManager.Instance.AddItem(new CustomItem(prefab, false, config));
+            var item = new CustomItem(prefab, false, config);
+            // the idol only counts at the Forge of Potential (refining past level 4), like on the game's own weapons
+            var resources = item.Recipe?.Recipe?.m_resources;
+            if (hasIdol && resources != null && resources.Length > 0) resources[resources.Length - 1].m_upgraderResource = true;
+            ItemManager.Instance.AddItem(item);
+        }
+
+        // each katana's own base weapon moves (Krom's, the Slayer's), to go back to when a swing setting is off
+        private struct BaseMoveset
+        {
+            internal ItemDrop.ItemData.AnimationState State;
+            internal string Attack, Heavy;
+            internal int AttackChain, AttackRandom, HeavyChain, HeavyRandom;
+        }
+
+        private static readonly Dictionary<ItemDrop.ItemData.SharedData, BaseMoveset> BaseMoves = new Dictionary<ItemDrop.ItemData.SharedData, BaseMoveset>();
+
+        // the swing settings on every katana's item data: the upper body swings or the greatsword ones, the one-handed or
+        // the greatsword movement, the heavy attack's motion. again whenever a value changes or the server's arrives
+        private static void ApplyMoveSettings()
+        {
+            Moves.OwnCuts = UpperBodySwings.Value;
+            foreach (var pair in BaseMoves)
+            {
+                var shared = pair.Key;
+                var own = pair.Value;
+                var normal = shared.m_attack;
+                var heavy = shared.m_secondaryAttack;
+                shared.m_animationState = OneHandedMoves.Value ? ItemDrop.ItemData.AnimationState.OneHanded : own.State;
+                // the game builds the trigger from the name and the chain level: shovel0, shovel1, shovel2
+                normal.m_attackAnimation = UpperBodySwings.Value ? UpperSwing : own.Attack;
+                normal.m_attackChainLevels = UpperBodySwings.Value ? 3 : own.AttackChain;
+                normal.m_attackRandomAnimations = UpperBodySwings.Value ? 0 : own.AttackRandom;
+                heavy.m_attackAnimation = own.Heavy;
+                heavy.m_attackChainLevels = own.HeavyChain;
+                heavy.m_attackRandomAnimations = own.HeavyRandom;
+                if (UpperBodySwings.Value && HeavyAnimationFrom.Value == "UpperBody")
+                {
+                    heavy.m_attackAnimation = UpperSwing + "2";
+                    heavy.m_attackChainLevels = 1;
+                    heavy.m_attackRandomAnimations = 0;
+                    continue;
+                }
+                // a borrowed motion, UpperBody without the upper body swings is 0.1.1's Stagbreaker slam
+                string from = HeavyAnimationFrom.Value == "UpperBody" ? "SledgeStagbreaker" : HeavyAnimationFrom.Value;
+                if (!BorrowHeavyAnimation(shared, from) && from != "SledgeIron") BorrowHeavyAnimation(shared, "SledgeIron");
+            }
         }
 
         // every katana of a kind shares its item data, so a change or a server sync applies to the next swing

@@ -103,6 +103,38 @@ namespace Iaido_Katana
         }
     }
 
+    // smooth timing through a run of keys: every value passes its keys with a speed (a monotone cubic, after Fritsch and
+    // Carlson, so it never overshoots a key) and only stops where it turns back, where two keys hold still, or at the
+    // run's ends. the old ease on every segment stopped each move at every key, which made the sheathing jiggle
+    internal static class Spline
+    {
+        // the value at x in the segment from (t1, v1) to (t2, v2), with the neighbours (t0, v0) and (t3, v3). a NaN
+        // neighbour time ends the run there and the value comes to rest
+        internal static float Through(float t0, float t1, float t2, float t3, float v0, float v1, float v2, float v3, float x) =>
+            Hermite(t1, t2, v1, v2, float.IsNaN(t0) ? 0f : Slope(t0, t1, t2, v0, v1, v2), float.IsNaN(t3) ? 0f : Slope(t1, t2, t3, v1, v2, v3), x);
+
+        // the speed at the middle point: 0 where the value turns back or holds, else a weighted harmonic mean of both
+        // sides (never more than three times the slower one, so the curve stays between its keys)
+        internal static float Slope(float ta, float tb, float tc, float va, float vb, float vc)
+        {
+            float h0 = tb - ta, h1 = tc - tb;
+            if (h0 <= 1e-5f || h1 <= 1e-5f) return 0f;
+            float d0 = (vb - va) / h0, d1 = (vc - vb) / h1;
+            if (d0 * d1 <= 0f) return 0f;
+            float w0 = 2f * h1 + h0, w1 = h1 + 2f * h0;
+            return (w0 + w1) / (w0 / d0 + w1 / d1);
+        }
+
+        // the cubic from (t1, v1) to (t2, v2), leaving with the speed m1 and arriving with m2
+        internal static float Hermite(float t1, float t2, float v1, float v2, float m1, float m2, float x)
+        {
+            float h = t2 - t1;
+            if (h <= 1e-5f) return v2;
+            float s = Mathf.Clamp01((x - t1) / h), s2 = s * s, s3 = s2 * s;
+            return (2f * s3 - 3f * s2 + 1f) * v1 + (s3 - 2f * s2 + s) * h * m1 + (3f * s2 - 2f * s3) * v2 + (s3 - s2) * h * m2;
+        }
+    }
+
     // one arm in world space: where its joints are and how its three bones are turned
     internal struct Arm
     {
@@ -116,6 +148,7 @@ namespace Iaido_Katana
         internal float SpineTwist = -33f;   // the upper body turns left, which brings the right shoulder forward
         internal float SpineLean = 8f;      // and leans forward a little
         internal bool HeadForward = true;   // the neck turns back, so the head keeps looking where the player looks
+        internal float HeadDown;            // and this many degrees below level (the thunderclap's finish looks at the ground ahead)
         // the right hand on the grip in front of the belly, the elbow bent and hanging down the side, the forearm across
         // the belly and the wrist straight (found by StancePreview tune, the user's drawing of 11 Oct)
         internal Vector3 Grip = new Vector3(-0.05f, 1.12f, 0.38f);
@@ -133,6 +166,7 @@ namespace Iaido_Katana
         internal Quaternion? SheathAt;        // where the scabbard really hangs (the blade's turn and SheathGrip), when the game knows it.
         internal Vector3 SheathGrip;          // the sheathing slides the blade into it, not into the stance's own aim
         internal Vector3 MouthAxis;           // the scabbard's way from the mouth to the tip, where the left hand holds it off the blade (zero: the blade's)
+        internal float HipTurn;               // the hips' turn in the thunderclap's crouch, degrees (CrouchSettings.HipTurn): its cut turns them into the swing
     }
 
     // the thunderclap's low crouch, in the player's own frame, meters from the feet
@@ -306,13 +340,14 @@ namespace Iaido_Katana
 
         private static float Wrap(float degrees) => degrees > 180f ? degrees - 360f : degrees < -180f ? degrees + 360f : degrees;
 
-        // how strained a wrist is: a little inside the comfortable ranges, steeply more outside them
+        // how strained a wrist is: a little inside the comfortable ranges, steeply more outside them. a two-handed sword grip
+        // bends the wrists far toward the little finger (kendo's wringing grip), so that side goes to 38 degrees
         internal static float Strain(float flex, float thumb, float roll)
         {
             float Over(float v, float low, float high) => Math.Max(0f, Math.Max(low - v, v - high));
             float Sq(float x) => x * x;
             return Sq(flex / 45f) + Sq(thumb / 25f) + 0.5f * Sq(roll / 90f)
-                   + 4f * (Sq(Over(flex, -40f, 40f) / 10f) + Sq(Over(thumb, -25f, 15f) / 10f) + Sq(Over(roll, -90f, 90f) / 10f));
+                   + 4f * (Sq(Over(flex, -40f, 40f) / 10f) + Sq(Over(thumb, -38f, 15f) / 10f) + Sq(Over(roll, -90f, 90f) / 10f));
         }
 
         private const float PolePull = 2f; // how strongly the stance's pole holds the elbow, at natural 0
@@ -328,7 +363,7 @@ namespace Iaido_Katana
             {
                 Feet = rootPos;
                 Root = rootRot;
-                Chest = QMath.Euler(s.SpineLean, s.SpineTwist, 0f);
+                Chest = QMath.Euler(s.SpineLean, s.SpineTwist + s.HipTurn, 0f);
             }
 
             // how deep a point is inside the body with room meters around it, 0 outside to 1 at the spine
@@ -350,6 +385,18 @@ namespace Iaido_Katana
             internal Vector3 Right, Left;
             internal bool Has;
             internal float MaxTurn;
+        }
+
+        // a direction turned from a toward b by share u of the angle between them, over the up side when they are opposite
+        private static Vector3 Toward(Vector3 a, Vector3 b, float u, Vector3 up)
+        {
+            a = QMath.Norm(a);
+            b = QMath.Norm(b);
+            var axis = QMath.Cross(a, b);
+            if (QMath.Length(axis) < 1e-3f) axis = QMath.Cross(a, up);
+            if (QMath.Length(axis) < 1e-3f) axis = QMath.Cross(a, new Vector3(1f, 0f, 0f));
+            float angle = (float)Math.Acos(Mathf.Clamp(QMath.Dot(a, b), -1f, 1f)) * Mathf.Rad2Deg * u;
+            return QMath.Norm(QMath.Rotate(AxisAngle(QMath.Norm(axis), angle), a));
         }
 
         // the elbow's way turned from last frame's toward want by at most MaxTurn degrees about the arm's line
@@ -467,6 +514,10 @@ namespace Iaido_Katana
         internal static Quaternion Spine(Quaternion rootRot, StanceSettings s) =>
             QMath.Mul(rootRot, QMath.Mul(QMath.Euler(s.SpineLean, s.SpineTwist, 0f), QMath.Conj(rootRot)));
 
+        // the turn the neck takes back so the head looks ahead: the spine's, less HeadDown of its lean
+        internal static Quaternion Head(Quaternion rootRot, StanceSettings s) =>
+            QMath.Mul(rootRot, QMath.Mul(QMath.Euler(s.SpineLean - s.HeadDown, s.SpineTwist, 0f), QMath.Conj(rootRot)));
+
         // half of a rotation, for spreading the spine turn over two bones
         internal static Quaternion Half(Quaternion q) => QMath.Nlerp(new Quaternion(0f, 0f, 0f, 1f), q, 0.5f);
 
@@ -515,8 +566,8 @@ namespace Iaido_Katana
             var leftTarget = LeftTarget(rootPos, rootRot, grip, blade, s);
             var mouth = s.MouthAxis == Vector3.zero ? blade : QMath.Rotate(rootRot, s.MouthAxis);
             float on = Mathf.Clamp01(s.LeftOnBlade);
-            var thumb = mouth * -(1f - on) + blade * (s.LeftAlongBlade < 0f ? on : -on);
-            thumb = QMath.Length(thumb) > 0.2f ? QMath.Norm(thumb) : blade;
+            // between the scabbard and the handle the thumb turns over the top, never flips
+            var thumb = Toward(-mouth, s.LeftAlongBlade < 0f ? blade : -blade, on, QMath.Rotate(rootRot, new Vector3(0f, 1f, 0f)));
             var leftPole = rootPos + QMath.Rotate(rootRot, s.LeftElbow);
             Elbow(left, leftTarget, leftPole, out var leftElbow, out _, out _);
             var leftWrist = leftTarget;
@@ -577,17 +628,20 @@ namespace Iaido_Katana
         {
             int i = 0;
             while (i < Keys.Length - 2 && t > Keys[i + 1].Time) i++;
-            var a = Resolve(Keys[i], stance);
-            var b = Resolve(Keys[i + 1], stance);
-            float u = Mathf.Clamp01((t - Keys[i].Time) / (Keys[i + 1].Time - Keys[i].Time));
-            u = u * u * (3f - 2f * u);
-            into.Grip = a.Grip + (b.Grip - a.Grip) * u;
-            into.BladeYaw = a.Yaw + (b.Yaw - a.Yaw) * u;
-            into.BladePitch = a.Pitch + (b.Pitch - a.Pitch) * u;
-            into.EdgeRoll = a.Roll + (b.Roll - a.Roll) * u;
-            into.SpineTwist = a.Twist + (b.Twist - a.Twist) * u;
-            into.SpineLean = a.Lean + (b.Lean - a.Lean) * u;
-            into.LeftOnBlade = a.Left + (b.Left - a.Left) * u;
+            // through its keys without stopping at them (Spline): the segment from b to c between a and d
+            var b = Resolve(Keys[i], stance);
+            var c = Resolve(Keys[i + 1], stance);
+            var a = i > 0 ? Resolve(Keys[i - 1], stance) : b;
+            var d = i + 2 < Keys.Length ? Resolve(Keys[i + 2], stance) : c;
+            float t0 = i > 0 ? a.Time : float.NaN, t3 = i + 2 < Keys.Length ? d.Time : float.NaN;
+            float At(float va, float vb, float vc, float vd) => Spline.Through(t0, b.Time, c.Time, t3, va, vb, vc, vd, t);
+            into.Grip = new Vector3(At(a.Grip.x, b.Grip.x, c.Grip.x, d.Grip.x), At(a.Grip.y, b.Grip.y, c.Grip.y, d.Grip.y), At(a.Grip.z, b.Grip.z, c.Grip.z, d.Grip.z));
+            into.BladeYaw = At(a.Yaw, b.Yaw, c.Yaw, d.Yaw);
+            into.BladePitch = At(a.Pitch, b.Pitch, c.Pitch, d.Pitch);
+            into.EdgeRoll = At(a.Roll, b.Roll, c.Roll, d.Roll);
+            into.SpineTwist = At(a.Twist, b.Twist, c.Twist, d.Twist);
+            into.SpineLean = At(a.Lean, b.Lean, c.Lean, d.Lean);
+            into.LeftOnBlade = Mathf.Clamp01(At(a.Left, b.Left, c.Left, d.Left));
             into.LeftAlongBlade = stance.LeftAlongBlade;
             // off the blade the left hand keeps hold of the scabbard's mouth, it does not let go of it in the draw
             into.LeftHand = Moves.Mouth(stance);
@@ -621,25 +675,40 @@ namespace Iaido_Katana
 
         private struct Key
         {
-            internal float Time, Yaw, Pitch, Roll, Twist, Lean, Left;
+            internal float Time, Yaw, Pitch, Roll, Twist, Lean, Left, Hip, Head;
             internal Vector3 Grip;
         }
+
+        private static readonly float GatherHip = new CrouchSettings().HipTurn; // the crouch's own hip turn while it gathers
 
         // the crouch's sheathed stance, lower and leaning further than the normal one, the right elbow bent and the
         // wrist straight (11 Oct, StancePreview tune with natural arms on the crouch)
         private static Key Crouched(StanceSettings stance) => new Key
         {
             Grip = stance.Grip + new Vector3(-0.1f, -0.17f, 0.26f), Yaw = stance.BladeYaw - 15f, Pitch = stance.BladePitch - 11f,
-            Roll = stance.EdgeRoll - 5f, Twist = stance.SpineTwist + 3f, Lean = stance.SpineLean + 35f, Left = 1f
+            Roll = stance.EdgeRoll - 5f, Twist = stance.SpineTwist + 3f, Lean = stance.SpineLean + 35f, Left = 1f, Hip = GatherHip
         };
 
-        // the cut, after the prep: draw, across the front, out to the right and held low there, the blade ahead. the
-        // palm stays down all through like the parry's slash, so the forearm never rolls over
+        // the cut, after the prep: drawn low from the left hip, a high flat sweep across the front, and held out to the
+        // right side with the blade pointing fully to the side. like the dash cuts of anime the body bends deep forward
+        // and the head looks low, and the sword arm stays level with the ground (so it rises against the bent chest).
+        // the hips and chest turn into it, the way a full horizontal cut is driven: a palm down wrist alone points the
+        // blade no further than 55 degrees left of its forearm, so the arm goes out to the side (no more than 30 degrees
+        // behind the chest's line) and the body turns. the palm stays down all through like the parry's slash (11 Oct,
+        // the user's wish, StancePreview tune)
         private static readonly Key[] CutKeys =
         {
-            new Key { Time = 0.03f, Grip = new Vector3(0.4f, 1.075f, 0.35f), Yaw = 305f, Pitch = -10f, Roll = -128f, Twist = -15f, Lean = 40f, Left = 0f },
-            new Key { Time = 0.07f, Grip = new Vector3(0.615f, 0.95f, 0.305f), Yaw = 341f, Pitch = -8f, Roll = -126f, Twist = 10f, Lean = 36f, Left = 0f },
-            new Key { Time = Cut, Grip = new Vector3(0.58f, 1.015f, -0.085f), Yaw = 353f, Pitch = 10f, Roll = -130f, Twist = 30f, Lean = 38f, Left = 0f },
+            new Key { Time = 0.03f, Grip = new Vector3(0.45f, 1.06f, 0.32f), Yaw = 310f, Pitch = -10f, Roll = -126f, Twist = -5f, Lean = 41f, Left = 0f, Hip = -15f, Head = 15f },
+            new Key { Time = 0.05f, Grip = new Vector3(0.71f, 1.33f, 0.006f), Yaw = 352.7f, Pitch = -4.4f, Roll = -88f, Twist = 10f, Lean = 50.8f, Left = 0f, Hip = 4.9f, Head = 20f },
+            new Key { Time = 0.07f, Grip = new Vector3(0.59f, 1.43f, -0.3f), Yaw = 391.5f, Pitch = -5f, Roll = -84f, Twist = 11f, Lean = 53.5f, Left = 0f, Hip = 20f, Head = 25f },
+            new Key { Time = Cut, Grip = new Vector3(0.19f, 1.51f, -0.53f), Yaw = 450f, Pitch = -5f, Roll = -75f, Twist = 27f, Lean = 59.5f, Left = 0f, Hip = 35f, Head = 35f },
+        };
+
+        // the sheathing starts with the arm still out, the blade swung back to point ahead (the hand goes round the
+        // outside, not past the ribs)
+        private static readonly Key SheatheBack = new Key
+        {
+            Grip = new Vector3(0.555f, 1.1f, -0.13f), Yaw = 374.8f, Pitch = -1f, Roll = -118f, Twist = 13.7f, Lean = 55f, Left = 0f, Hip = 5f, Head = 30f
         };
 
         // half way through the sheathing: the blade in front, lifted over the front knee, on its way to the left
@@ -648,7 +717,7 @@ namespace Iaido_Katana
         private const float SheatheOut = 0.2f; // how far out of the scabbard the blade is laid along it before sliding in (the crouched arm reaches no further)
         private static readonly Key SheatheMid = new Key
         {
-            Grip = new Vector3(0.31f, 1.01f, 0.74f), Yaw = 280f, Pitch = -18.5f, Roll = -115f, Twist = -10f, Lean = 35f, Left = 0f
+            Grip = new Vector3(0.59f, 1f, 0.52f), Yaw = 315f, Pitch = -15f, Roll = -125f, Twist = 5f, Lean = 39f, Left = 0f, Hip = 3f, Head = 15f
         };
 
         // the pose t seconds in, written into "into", and how far down the crouch is (0 standing, 1 full crouch)
@@ -658,7 +727,7 @@ namespace Iaido_Katana
             var up = new Key
             {
                 Grip = stance.Grip, Yaw = stance.BladeYaw, Pitch = stance.BladePitch, Roll = stance.EdgeRoll,
-                Twist = stance.SpineTwist, Lean = stance.SpineLean, Left = 1f
+                Twist = stance.SpineTwist, Lean = stance.SpineLean, Left = 1f, Hip = GatherHip
             };
             Key a, b;
             float u;
@@ -673,13 +742,17 @@ namespace Iaido_Katana
             }
             else if (t < c)
             {
-                float k = t - prep;
-                int i = 0;
-                while (i < CutKeys.Length - 1 && k > CutKeys[i].Time) i++;
-                a = i == 0 ? low : CutKeys[i - 1];
-                b = CutKeys[i];
-                float from = i == 0 ? 0f : CutKeys[i - 1].Time;
-                u = (k - from) / (b.Time - from);
+                // the draw and cut through its keys without stopping at them (Spline)
+                var run = new Key[CutKeys.Length + 1];
+                var times = new float[CutKeys.Length + 1];
+                run[0] = low;
+                for (int i = 0; i < CutKeys.Length; i++)
+                {
+                    run[i + 1] = CutKeys[i];
+                    times[i + 1] = CutKeys[i].Time;
+                }
+                a = b = Through(run, times, t - prep);
+                u = 0f;
                 crouch = 1f;
             }
             else if (t < h)
@@ -697,17 +770,12 @@ namespace Iaido_Katana
                 StanceSolver.Sword(Vector3.zero, new Quaternion(0f, 0f, 0f, 1f), sheathed, out _, out _, out var lowBlade);
                 lowOut.Grip -= lowBlade * SheatheOut;
                 lowOut.Left = 0f;
-                if (k < 0.45f)
+                if (k < 0.75f)
                 {
-                    a = CutKeys[CutKeys.Length - 1];
-                    b = SheatheMid;
-                    u = k / 0.45f;
-                }
-                else if (k < 0.75f)
-                {
-                    a = SheatheMid;
-                    b = lowOut;
-                    u = (k - 0.45f) / 0.3f;
+                    // round the outside and over the knee without stopping at the way points (Spline), at rest when
+                    // laid along the scabbard
+                    a = b = Through(new[] { CutKeys[CutKeys.Length - 1], SheatheBack, SheatheMid, lowOut }, SheatheTimes, k);
+                    u = 0f;
                 }
                 else
                 {
@@ -732,6 +800,8 @@ namespace Iaido_Katana
             into.SpineTwist = a.Twist + (b.Twist - a.Twist) * u;
             into.SpineLean = a.Lean + (b.Lean - a.Lean) * u;
             into.LeftOnBlade = a.Left + (b.Left - a.Left) * u;
+            into.HipTurn = a.Hip + (b.Hip - a.Hip) * u;
+            into.HeadDown = a.Head + (b.Head - a.Head) * u;
             // the left hand moves to its crouched hold as the body sinks, and back as it rises
             into.LeftAlongBlade = stance.LeftAlongBlade + (CrouchLeftAlong - stance.LeftAlongBlade) * crouch;
             // off the blade, the left hand holds the scabbard's mouth where the crouch leaves it (saya biki)
@@ -750,6 +820,33 @@ namespace Iaido_Katana
             u = Mathf.Clamp01(u);
             return u * u * (3f - 2f * u);
         }
+
+        // the sheathing's way points, as shares of Sheathe: back round the outside, over the knee, laid on
+        private static readonly float[] SheatheTimes = { 0f, 0.2f, 0.45f, 0.75f };
+
+        // the pose at x through the keys of run (at times), each value passing its keys with a speed (Spline), at rest
+        // at the run's ends
+        private static Key Through(Key[] run, float[] times, float x)
+        {
+            int i = 0;
+            while (i < run.Length - 2 && x > times[i + 1]) i++;
+            Key b = run[i], c = run[i + 1];
+            Key a = i > 0 ? run[i - 1] : b, d = i + 2 < run.Length ? run[i + 2] : c;
+            float t0 = i > 0 ? times[i - 1] : float.NaN, t1 = times[i], t2 = times[i + 1], t3 = i + 2 < run.Length ? times[i + 2] : float.NaN;
+            float At(float va, float vb, float vc, float vd) => Spline.Through(t0, t1, t2, t3, va, vb, vc, vd, x);
+            return new Key
+            {
+                Grip = new Vector3(At(a.Grip.x, b.Grip.x, c.Grip.x, d.Grip.x), At(a.Grip.y, b.Grip.y, c.Grip.y, d.Grip.y), At(a.Grip.z, b.Grip.z, c.Grip.z, d.Grip.z)),
+                Yaw = At(a.Yaw, b.Yaw, c.Yaw, d.Yaw),
+                Pitch = At(a.Pitch, b.Pitch, c.Pitch, d.Pitch),
+                Roll = At(a.Roll, b.Roll, c.Roll, d.Roll),
+                Twist = At(a.Twist, b.Twist, c.Twist, d.Twist),
+                Lean = At(a.Lean, b.Lean, c.Lean, d.Lean),
+                Left = Mathf.Clamp01(At(a.Left, b.Left, c.Left, d.Left)),
+                Hip = At(a.Hip, b.Hip, c.Hip, d.Hip),
+                Head = At(a.Head, b.Head, c.Head, d.Head),
+            };
+        }
     }
 
     // the katana's own moves, after the iaido forms in the user's clip: a three cut combo laid over the game's greatsword
@@ -765,6 +862,7 @@ namespace Iaido_Katana
             internal float Twist, Lean;
             internal float Left;       // 1 the left hand on the blade or the handle at Along, 0 at the scabbard mouth
             internal float Along;
+            internal float Hip;        // the hips' turn into the cut, degrees (the chest's twist comes on top)
         }
 
         private struct Key
@@ -776,10 +874,25 @@ namespace Iaido_Katana
             internal float Twist, Lean, Left, Along;
             internal bool Sheath;             // the blade lies along the scabbard, Out meters out of it
             internal float Out;
+            internal float Hip;               // the hips turn into the cut first, the chest's twist comes on top of it
         }
 
-        // the greatsword clips' hit moments (their animation events), which the cuts pass through the middle at
+        // the greatsword clips' hit moments (their animation events), which the cuts pass through the middle at. the
+        // keys are written in this time
         internal static readonly float[] HitTimes = { 0.604f, 0.492f, 0.639f };
+
+        // the game's upper body swing clips (the snow shovel's, played on the animator's upper body layer so the legs keep
+        // walking) and their hit moments: a cut's keys run in the greatsword time above, stretched to these
+        internal static readonly string[] UpperClips = { "Attack Shovel 1 Upperbody", "Attack Shovel 2 Upperbody", "Attack Shovel 3" };
+        internal static readonly float[] UpperHitTimes = { 0.301f, 0.314f, 0.340f };
+
+        // a cut's key time for clipTime seconds into its upper body clip (step HeavyStep: the heavy on the last clip)
+        internal static float KeyTime(int step, float clipTime)
+        {
+            float key = step == HeavyStep ? HeavyHit : HitTimes[step];
+            float clip = UpperHitTimes[step == HeavyStep ? 2 : step];
+            return clipTime * key / clip;
+        }
         internal const float NotoBase = 1.5f;    // the sheathing's length its keys are written for
         internal const float NotoClick = 1.45f;  // the guard meets the scabbard here
         internal const float NotoOut = 0.35f;     // how much of the blade is still out when it is laid along the scabbard
@@ -791,50 +904,53 @@ namespace Iaido_Katana
         private const float CurveFrom = 0.27f;
 
         // 1: from the scabbard, the draw cut across the front (the parry's slash, with the game's timing). the blade is
-        // pulled forward along the scabbard first, then it leaves it into the cut
+        // pulled forward along the scabbard first, then it leaves it into the cut. the hips lead it round, the palm stays
+        // down. (11 Oct: every key of the cuts found by StancePreview tune with natural arms, on the cut's own footing)
         private static readonly Key[] DrawCut =
         {
-            new Key { Time = 0.3f, Sheath = true, Out = 0.1f },
-            new Key { Time = 0.42f, Sheath = true, Out = 0.45f },
-            new Key { Time = 0.5f, Grip = new Vector3(0f, 1.26f, 0.52f), Yaw = 320f, Pitch = -5f, Roll = -90f, Twist = -25f, Lean = 10f },
-            new Key { Time = 0.604f, Grip = new Vector3(0.12f, 1.28f, 0.46f), Yaw = 380f, Pitch = -3f, Roll = -90f, Twist = -8f, Lean = 12f },
-            new Key { Time = 0.72f, Grip = new Vector3(0.34f, 1.25f, 0.28f), Yaw = 445f, Pitch = 5f, Roll = -90f, Twist = 18f, Lean = 10f },
+            new Key { Time = 0.3f, Sheath = true, Out = 0.1f, Hip = -5f },
+            new Key { Time = 0.42f, Sheath = true, Out = 0.45f, Hip = -10f },
+            new Key { Time = 0.5f, Grip = new Vector3(0.45f, 1f, 0.388f), Yaw = -48.6f, Pitch = -12f, Roll = -129.5f, Twist = -30f, Lean = 14f, Hip = -12f },
+            new Key { Time = 0.604f, Grip = new Vector3(0.593f, 1.053f, 0f), Yaw = -25f, Pitch = -6f, Roll = -132.2f, Twist = 10f, Lean = 15f, Hip = 17.2f },
+            new Key { Time = 0.72f, Grip = new Vector3(0.556f, 1.059f, -0.25f), Yaw = -7.2f, Pitch = 0f, Roll = -132.2f, Twist = 15f, Lean = 13f, Hip = 17f },
         };
 
-        // 1 with the blade already out: wound up low on the left, the blade back past the hip, then the same cut across
+        // 1 with the blade already out: wound up low on the left, the blade back past the hip and its tip a little up (over
+        // the left forearm), then the same cut across
         private static readonly Key[] SideCut =
         {
-            new Key { Time = 0.15f, Grip = new Vector3(-0.1f, 1.14f, 0.44f), Yaw = 275f, Pitch = 25f, Roll = -90f, Twist = -30f, Lean = 14f },
-            new Key { Time = 0.35f, Grip = new Vector3(-0.15f, 1.15f, 0.45f), Yaw = 240f, Pitch = 0f, Roll = -90f, Twist = -35f, Lean = 8f },
+            new Key { Time = 0.15f, Grip = new Vector3(0.119f, 1.37f, 0.6f), Yaw = 225f, Pitch = -15f, Roll = -77.016f, Twist = -11.375f, Lean = 15f, Hip = -29f },
+            new Key { Time = 0.35f, Grip = new Vector3(0.287f, 1f, 0.495f), Yaw = 270.8f, Pitch = -5f, Roll = -136.1f, Twist = -35f, Lean = 8f, Hip = -14.6f },
             DrawCut[2], DrawCut[3], DrawCut[4],
         };
 
-        // 2: lifted on the right, the tip back over the right shoulder into the raise above the head (the blade clear of
-        // the helmet), the left hand joining on the handle, then straight down to chest height
+        // 2: swung round in front on the right with the arm long (a straight line in would pull the hand in past the
+        // shoulder), lifted, the tip back over the right shoulder into the raise above the head, both hands on the
+        // handle, then straight down to chest height. two hands wring the grip (the wrists bend toward the little finger)
         private static readonly Key[] OverheadCut =
         {
-            new Key { Time = 0.12f, Grip = new Vector3(0.25f, 1.5f, 0.35f), Blade = new Vector3(0.4f, 1f, 0.1f), Edge = new Vector3(0f, 0.1f, -1f), Twist = 10f, Lean = 5f },
-            new Key { Time = 0.22f, Grip = new Vector3(0.16f, 1.85f, 0.22f), Blade = new Vector3(0.707f, 0.5f, -0.5f), Edge = new Vector3(-0.707f, 0.5f, -0.5f), Lean = -3f, Left = 0.5f, Along = TwoHands },
+            new Key { Time = 0.06f, Grip = new Vector3(0.535f, 1.1f, 0.15f), Yaw = -10f, Pitch = -50f, Roll = -130.536f, Twist = 15f, Lean = 14f, Hip = 15f },
+            new Key { Time = 0.12f, Grip = new Vector3(0.1f, 1.35f, 0.507f), Yaw = 45f, Pitch = -75f, Roll = -229f, Twist = 20f, Lean = 5.25f, Hip = 5.25f, Left = 1f, Along = TwoHands },
+            new Key { Time = 0.22f, Grip = new Vector3(0.159f, 1.785f, 0.263f), Yaw = 171.215f, Pitch = -15.771f, Roll = 9.646f, Twist = 14.625f, Lean = -6.501f, Hip = 9.191f, Left = 1f, Along = TwoHands },
             Raised(0.32f),
-            new Key { Time = 0.42f, Grip = new Vector3(0.03f, 1.85f, 0.38f), Blade = new Vector3(0f, 1f, 0.25f), Edge = new Vector3(0f, -0.25f, 1f), Lean = 6f, Left = 1f, Along = TwoHands },
-            new Key { Time = 0.492f, Grip = new Vector3(0.04f, 1.36f, 0.48f), Blade = new Vector3(0f, -0.1f, 1f), Edge = new Vector3(0f, -1f, -0.1f), Lean = 15f, Left = 1f, Along = TwoHands },
-            new Key { Time = 0.6f, Grip = new Vector3(0.04f, 1.24f, 0.45f), Blade = new Vector3(0f, -0.35f, 1f), Edge = new Vector3(0f, -1f, -0.35f), Lean = 18f, Left = 1f, Along = TwoHands },
+            new Key { Time = 0.42f, Grip = new Vector3(0.055f, 1.62f, 0.568f), Yaw = -14.747f, Pitch = -105f, Roll = 2.403f, Twist = 6.821f, Lean = 11.308f, Hip = 10f, Left = 1f, Along = TwoHands },
+            new Key { Time = 0.492f, Grip = new Vector3(-0.15f, 1.2f, 0.393f), Yaw = 8f, Pitch = -12f, Roll = -240f, Twist = -6.1f, Lean = 18.2f, Hip = -10f, Left = 1f, Along = TwoHands },
+            new Key { Time = 0.6f, Grip = new Vector3(-0.12f, 1.15f, 0.411f), Yaw = 8f, Pitch = -12f, Roll = -239f, Twist = -6.229f, Lean = 25f, Hip = -10f, Left = 1f, Along = TwoHands },
         };
 
-        // the raise above the head (jodan): both hands high, the blade back over the head, edge up
-        private static Key Raised(float time) => new Key
-        {
-            Time = time, Grip = new Vector3(0.04f, 1.92f, 0.08f), Blade = new Vector3(0f, 0.12f, -1f), Edge = new Vector3(0f, 1f, 0.12f), Lean = -5f, Left = 1f, Along = TwoHands,
-        };
+        // the raise above the head (jodan): both hands high, the blade back over the head
+        private static Key Raised(float time) => new Key { Time = time, Grip = new Vector3(0.028f, 1.95f, 0.273f), Yaw = 160f, Pitch = -15f, Roll = 0.066f, Twist = 10f, Lean = -4.347f, Hip = 2.198f, Left = 1f, Along = TwoHands };
 
-        // 3: from over the right shoulder diagonally down across to the left hip (kesa giri), in the plane of the
-        // right-up diagonal and forward, the edge leading
+        // 3: from over the right shoulder diagonally down toward the left hip (kesa giri), the blade kept in one
+        // diagonal plane with the edge leading (so the hands never twist between keys), the hips turning left with
+        // it, stopped at the hit (further down the left wrist would bend past its limit)
         private static readonly Key[] DiagonalCut =
         {
-            Diagonal(0.4f, -30f, new Vector3(0.32f, 1.6f, 0.25f), 25f, 0f),
-            Diagonal(0.58f, 40f, new Vector3(0.2f, 1.55f, 0.46f), 15f, 8f),
-            Diagonal(0.639f, 100f, new Vector3(0.04f, 1.34f, 0.47f), -5f, 14f),
-            Diagonal(0.74f, 125f, new Vector3(-0.1f, 1.22f, 0.4f), -10f, 18f),
+            new Key { Time = 0.4f, Grip = new Vector3(0.209f, 1.509f, 0.45f), Yaw = 129.2f, Pitch = -37.8f, Roll = 63.4f, Twist = 2.684f, Lean = -5f, Hip = 9.096f, Left = 1f, Along = TwoHands },
+            new Key { Time = 0.58f, Grip = new Vector3(0f, 1.35f, 0.407f), Yaw = 40.1f, Pitch = -32.8f, Roll = 122.7f, Twist = 15f, Lean = 11f, Hip = -2f, Left = 1f, Along = TwoHands },
+            new Key { Time = 0.61f, Grip = new Vector3(-0.15f, 1.25f, 0.394f), Yaw = 14.4f, Pitch = -14f, Roll = 133.2f, Twist = 4.625f, Lean = 8.5f, Hip = -13.448f, Left = 1f, Along = TwoHands },
+            new Key { Time = 0.639f, Grip = new Vector3(-0.223f, 1.05f, 0.3f), Yaw = 0f, Pitch = 0f, Roll = 120.199f, Twist = -9.793f, Lean = 22f, Hip = -38f, Left = 1f, Along = TwoHands },
+            new Key { Time = 0.74f, Grip = new Vector3(-0.25f, 1.12f, 0.4f), Yaw = 5f, Pitch = -10f, Roll = 120.881f, Twist = 0f, Lean = 20f, Hip = -34.25f, Left = 1f, Along = TwoHands },
         };
 
         private static Key Diagonal(float time, float degrees, Vector3 grip, float twist, float lean)
@@ -869,9 +985,10 @@ namespace Iaido_Katana
 
         internal static int Steps => 3;
 
-        // the katana's own cuts over the greatsword swings. off for the first beta: they clipped and froze the legs
-        // while walking. the game's greatsword and sledge swings play instead, the flick and sheathing after them stay
-        internal static readonly bool OwnCuts = false;
+        // the katana's own cuts over the game's swings. off in 0.1.x (they clipped and froze the legs while walking,
+        // the greatsword and sledge swings played instead). on again with the upper body swings (Swing.UpperBody), which
+        // leave the legs to the game's walk, set at start
+        internal static bool OwnCuts;
 
         // the part of each cut (clip seconds) its trail is drawn through: from the wind up's end to past the hit
         private static readonly float[] CutFrom = { 0.48f, 0.42f, 0.56f, 1.2f };
@@ -892,24 +1009,32 @@ namespace Iaido_Katana
 
         private static readonly Key[] DrawUp =
         {
-            new Key { Time = 0.1f, Sheath = true, Out = 0.1f },
-            new Key { Time = 0.25f, Sheath = true, Out = 0.45f },
-            new Key { Time = 0.38f, Grip = new Vector3(0.05f, 1.34f, 0.55f), Yaw = 330f, Pitch = -25f, Roll = -90f, Twist = -20f, Lean = 10f },
-            new Key { Time = 0.5f, Grip = new Vector3(-0.02f, 1.78f, 0.25f), Blade = new Vector3(-0.45f, 0.6f, -0.65f), Edge = new Vector3(0.55f, 0.75f, 0.3f), Twist = -5f, Left = 0.5f, Along = TwoHands },
+            new Key { Time = 0.1f, Sheath = true, Out = 0.1f, Hip = -5f },
+            new Key { Time = 0.25f, Sheath = true, Out = 0.45f, Hip = -10f },
+            new Key { Time = 0.38f, Grip = new Vector3(0.3f, 1.15f, 0.628f), Yaw = -45f, Pitch = -35f, Roll = -115.1f, Twist = -25f, Lean = 6.5f, Hip = -10f },
+            new Key { Time = 0.5f, Grip = new Vector3(-0.15f, 1.768f, 0.393f), Yaw = 190f, Pitch = -43.397f, Roll = -35.418f, Twist = 10f, Lean = -3f, Hip = 8f, Left = 0.5f, Along = TwoHands },
             Raised(0.62f),
             Raised(StepFrom - 0.05f),
-            new Key { Time = 1.2f, Grip = new Vector3(0.03f, 1.85f, 0.38f), Blade = new Vector3(0f, 1f, 0.25f), Edge = new Vector3(0f, -0.25f, 1f), Lean = 6f, Left = 1f, Along = TwoHands },
-            new Key { Time = HeavyHit, Grip = new Vector3(0.04f, 1.4f, 0.5f), Blade = new Vector3(0f, -0.05f, 1f), Edge = new Vector3(0f, -1f, -0.05f), Lean = 16f, Left = 1f, Along = TwoHands },
-            new Key { Time = 1.36f, Grip = new Vector3(0.04f, 1.22f, 0.47f), Blade = new Vector3(0f, -0.3f, 1f), Edge = new Vector3(0f, -1f, -0.3f), Lean = 18f, Left = 1f, Along = TwoHands },
+            new Key { Time = 1.2f, Grip = new Vector3(0.055f, 1.62f, 0.568f), Yaw = -14.747f, Pitch = -105f, Roll = 2.403f, Twist = 6.821f, Lean = 11.308f, Hip = 10f, Left = 1f, Along = TwoHands },
+            new Key { Time = HeavyHit, Grip = new Vector3(-0.15f, 1.2f, 0.4f), Yaw = 2.7f, Pitch = -16f, Roll = 115.413f, Twist = 8.939f, Lean = 22f, Hip = -8.556f, Left = 1f, Along = TwoHands },
+            new Key { Time = 1.36f, Grip = new Vector3(-0.12f, 1.15f, 0.411f), Yaw = 8f, Pitch = -12f, Roll = -239f, Twist = -6.229f, Lean = 25f, Hip = -10f, Left = 1f, Along = TwoHands },
         };
 
         // the same with the blade already out: lifted on the right and over the right shoulder into the raise, like the
         // overhead cut
         private static readonly Key[] RaiseUp =
         {
-            new Key { Time = 0.2f, Grip = new Vector3(0.25f, 1.5f, 0.35f), Blade = new Vector3(0.4f, 1f, 0.1f), Edge = new Vector3(0f, 0.1f, -1f), Twist = 10f, Lean = 5f },
-            new Key { Time = 0.4f, Grip = new Vector3(0.16f, 1.85f, 0.22f), Blade = new Vector3(0.707f, 0.5f, -0.5f), Edge = new Vector3(-0.707f, 0.5f, -0.5f), Lean = -3f, Left = 0.5f, Along = TwoHands },
+            new Key { Time = 0.2f, Grip = new Vector3(0.1f, 1.35f, 0.507f), Yaw = 45f, Pitch = -75f, Roll = -229f, Twist = 20f, Lean = 5.25f, Hip = 5.25f, Left = 1f, Along = TwoHands },
+            new Key { Time = 0.4f, Grip = new Vector3(0.159f, 1.785f, 0.263f), Yaw = 171.215f, Pitch = -15.771f, Roll = 9.646f, Twist = 14.625f, Lean = -6.501f, Hip = 9.191f, Left = 1f, Along = TwoHands },
             Raised(0.6f), DrawUp[5], DrawUp[6], DrawUp[7], DrawUp[8],
+        };
+
+        // the same from a cut that ended with the arm out on the right (the draw cut): swung round in front first, the
+        // arm long, like the overhead cut
+        private static readonly Key[] RaiseUpWide =
+        {
+            new Key { Time = 0.1f, Grip = new Vector3(0.535f, 1.1f, 0.15f), Yaw = -10f, Pitch = -50f, Roll = -130.536f, Twist = 15f, Lean = 14f, Hip = 15f },
+            RaiseUp[0], RaiseUp[1], RaiseUp[2], RaiseUp[3], RaiseUp[4], RaiseUp[5], RaiseUp[6],
         };
 
         // the step into the cut: the right foot forward, the left back with its toes out, the hips down and forward
@@ -948,7 +1073,7 @@ namespace Iaido_Katana
         // time it began
         internal static void Combo(int step, bool fromScabbard, float clipTime, float startClip, Pose from, StanceSettings stance, StanceSettings into)
         {
-            var keys = step == HeavyStep ? (fromScabbard ? DrawUp : RaiseUp)
+            var keys = step == HeavyStep ? (fromScabbard ? DrawUp : from.Grip.x > 0.3f ? RaiseUpWide : RaiseUp) // the arm out right: swung round
                 : step == 0 ? (fromScabbard ? DrawCut : SideCut) : step == 1 ? OverheadCut : DiagonalCut;
             Write(Sample(keys, clipTime, Mathf.Min(startClip, keys[0].Time - 0.05f), from, stance), stance, into);
         }
@@ -970,8 +1095,21 @@ namespace Iaido_Katana
             while (i < Noto.Length && k > Noto[i].Time) i++;
             if (i >= Noto.Length) return Noto[Noto.Length - 1].Out;
             if (i == 0 || !Noto[i - 1].Sheath || !Noto[i].Sheath) return -1f;
-            float u = Mathf.Clamp01((k - Noto[i - 1].Time) / (Noto[i].Time - Noto[i - 1].Time));
-            return Noto[i - 1].Out + (Noto[i].Out - Noto[i - 1].Out) * (u * u * (3f - 2f * u));
+            return OutAt(Noto, i, k, 0f);
+        }
+
+        // how far out of its scabbard the blade is at t on the slide from sheath key i - 1 to sheath key i. laid on from a
+        // free key it starts at rest, drawn from the start pose (sheathed) it speeds up from there, and leaving the
+        // scabbard into a free key it keeps its speed
+        private static float OutAt(Key[] keys, int i, float t, float startTime)
+        {
+            float t1 = keys[i - 1].Time, t2 = keys[i].Time, o1 = keys[i - 1].Out, o2 = keys[i].Out;
+            float m1 = i >= 2 ? (keys[i - 2].Sheath ? Spline.Slope(keys[i - 2].Time, t1, t2, keys[i - 2].Out, o1, o2) : 0f)
+                : Spline.Slope(startTime, t1, t2, 0f, o1, o2);
+            float m2 = i + 1 >= keys.Length ? 0f
+                : keys[i + 1].Sheath ? Spline.Slope(t1, t2, keys[i + 1].Time, o1, o2, keys[i + 1].Out)
+                : (o2 - o1) / Mathf.Max(1e-5f, t2 - t1);
+            return Spline.Hermite(t1, t2, o1, o2, m1, m2, t);
         }
 
         // the curved blade slid along its own curve by amount meters, out of the scabbard (or back in when negative): a
@@ -1001,8 +1139,9 @@ namespace Iaido_Katana
                 var sheath = Scabbard(stance);
                 if (k.Out != 0f) Slide(ref sheath.Grip, ref sheath.Rot, k.Out);
                 sheath.Left = 0f;
-                sheath.Twist += k.Twist; // a sheath key's twist and lean add to the stance's, leaning into the sheathing
+                sheath.Twist += k.Twist; // a sheath key's twist, lean and hip turn add to the stance's, leaning into the sheathing
                 sheath.Lean += k.Lean;
+                sheath.Hip += k.Hip;
                 return sheath;
             }
             Quaternion rot;
@@ -1012,7 +1151,7 @@ namespace Iaido_Katana
                 var s = new StanceSettings { BladeYaw = k.Yaw, BladePitch = k.Pitch, EdgeRoll = k.Roll };
                 StanceSolver.Sword(Vector3.zero, new Quaternion(0f, 0f, 0f, 1f), s, out _, out rot, out _);
             }
-            return new Pose { Grip = k.Grip, Rot = rot, Twist = k.Twist, Lean = k.Lean, Left = k.Left, Along = k.Along };
+            return new Pose { Grip = k.Grip, Rot = rot, Twist = k.Twist, Lean = k.Lean, Left = k.Left, Along = k.Along, Hip = k.Hip };
         }
 
         // the blade in its scabbard: where the scabbard really hangs when that is known, else where the stance aims
@@ -1040,22 +1179,77 @@ namespace Iaido_Katana
             SpineTwist = stance.SpineTwist, SpineLean = stance.SpineLean, LeftAlongBlade = stance.LeftAlongBlade, LeftOnBlade = 1f,
         };
 
+        // the pose t seconds into a move's keys, starting from the pose from at startTime. every value passes its keys with
+        // a speed (Spline) and only stops where it turns back, where keys hold still, at the move's ends, and where the
+        // blade is laid onto its scabbard. along the scabbard the blade slides exactly on its curve (OutAt), the same
+        // slide the scabbard follows (SlideOut)
         private static Pose Sample(Key[] keys, float t, float startTime, Pose from, StanceSettings stance)
         {
-            Pose a = from, b;
-            float ta = startTime, tb;
             int i = 0;
             while (i < keys.Length && t > keys[i].Time) i++;
             if (i >= keys.Length) return Resolve(keys[keys.Length - 1], stance);
-            if (i > 0)
+            // the segment from point i - 1 to point i (point -1 is the start pose), between the points i - 2 and i + 1
+            bool before = i >= 1, after = i + 1 < keys.Length;
+            // laid onto the scabbard from a free key: it arrives at rest, so it slides in straight
+            if (i >= 1 && !keys[i - 1].Sheath && keys[i].Sheath) after = false;
+            var b = PointAt(keys, i - 1, from, stance);
+            var c = Resolve(keys[i], stance);
+            var a = before ? PointAt(keys, i - 2, from, stance) : b;
+            var d = after ? Resolve(keys[i + 1], stance) : c;
+            float t0 = before ? TimeAt(keys, i - 2, startTime) : float.NaN, t1 = TimeAt(keys, i - 1, startTime), t2 = keys[i].Time;
+            float t3 = after ? keys[i + 1].Time : float.NaN;
+            float At(float va, float vb, float vc, float vd) => Spline.Through(t0, t1, t2, t3, va, vb, vc, vd, t);
+            Pose pose;
+            if (i >= 1 && keys[i - 1].Sheath && keys[i].Sheath)
+                pose = Resolve(new Key { Sheath = true, Out = OutAt(keys, i, t, startTime) }, stance);
+            else
+                pose = new Pose
+                {
+                    Grip = new Vector3(At(a.Grip.x, b.Grip.x, c.Grip.x, d.Grip.x), At(a.Grip.y, b.Grip.y, c.Grip.y, d.Grip.y), At(a.Grip.z, b.Grip.z, c.Grip.z, d.Grip.z)),
+                    Rot = Turn(a.Rot, b.Rot, c.Rot, d.Rot, t0, t1, t2, t3, t),
+                    Left = Mathf.Clamp01(At(a.Left, b.Left, c.Left, d.Left)),
+                    Along = At(a.Along, b.Along, c.Along, d.Along),
+                };
+            pose.Twist = At(a.Twist, b.Twist, c.Twist, d.Twist);
+            pose.Lean = At(a.Lean, b.Lean, c.Lean, d.Lean);
+            pose.Hip = At(a.Hip, b.Hip, c.Hip, d.Hip);
+            return pose;
+        }
+
+        private static float TimeAt(Key[] keys, int j, float startTime) => j < 0 ? startTime : keys[j].Time;
+
+        private static Pose PointAt(Key[] keys, int j, Pose from, StanceSettings stance) => j < 0 ? from : Resolve(keys[j], stance);
+
+        // the blade's turn at x from q1 to q2 the short way, timed like the other values: it keeps its speed through a key
+        // while the turn goes on the same way round, and stops where it turns back
+        private static Quaternion Turn(Quaternion q0, Quaternion q1, Quaternion q2, Quaternion q3, float t0, float t1, float t2, float t3, float x)
+        {
+            float a12 = Angle(q1, q2);
+            if (a12 < 1e-4f) return q2;
+            float a01 = 0f, a23 = 0f;
+            if (!float.IsNaN(t0))
             {
-                a = Resolve(keys[i - 1], stance);
-                ta = keys[i - 1].Time;
+                if (QMath.Dot(Way(q0, q1), Way(q1, q2)) > 0f) a01 = Angle(q0, q1);
+                else t0 = float.NaN;
             }
-            b = Resolve(keys[i], stance);
-            tb = keys[i].Time;
-            float u = tb > ta ? Mathf.Clamp01((t - ta) / (tb - ta)) : 1f;
-            return Blend(a, b, u * u * (3f - 2f * u));
+            if (!float.IsNaN(t3))
+            {
+                if (QMath.Dot(Way(q1, q2), Way(q2, q3)) > 0f) a23 = Angle(q2, q3);
+                else t3 = float.NaN;
+            }
+            float w = Spline.Through(t0, t1, t2, t3, -a01, 0f, a12, a12 + a23, x) / a12;
+            return QMath.Nlerp(q1, q2, Mathf.Clamp01(w));
+        }
+
+        // radians between two turns
+        private static float Angle(Quaternion a, Quaternion b) => 2f * Mathf.Acos(Mathf.Min(1f, Mathf.Abs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w)));
+
+        // the axis (scaled) a turn from a to b goes round, in the player's frame
+        private static Vector3 Way(Quaternion a, Quaternion b)
+        {
+            var r = QMath.Mul(b, QMath.Conj(a));
+            var v = new Vector3(r.x, r.y, r.z);
+            return r.w < 0f ? -v : v;
         }
 
         internal static Pose Blend(Pose a, Pose b, float u) => new Pose
@@ -1066,13 +1260,14 @@ namespace Iaido_Katana
             Lean = a.Lean + (b.Lean - a.Lean) * u,
             Left = a.Left + (b.Left - a.Left) * u,
             Along = a.Along + (b.Along - a.Along) * u,
+            Hip = a.Hip + (b.Hip - a.Hip) * u,
         };
 
         // the pose a set of stance settings shows (the stance, the slash, the thunderclap or a move)
         internal static Pose FromSettings(StanceSettings s)
         {
             StanceSolver.Sword(Vector3.zero, new Quaternion(0f, 0f, 0f, 1f), s, out _, out var rot, out _);
-            return new Pose { Grip = s.Grip, Rot = rot, Twist = s.SpineTwist, Lean = s.SpineLean, Left = s.LeftOnBlade, Along = s.LeftAlongBlade };
+            return new Pose { Grip = s.Grip, Rot = rot, Twist = s.SpineTwist, Lean = s.SpineLean, Left = s.LeftOnBlade, Along = s.LeftAlongBlade, Hip = s.HipTurn };
         }
 
         // the middle of the scabbard's mouth, where the left hand holds it, in the player's frame
@@ -1093,6 +1288,7 @@ namespace Iaido_Katana
             into.SpineLean = p.Lean;
             into.LeftOnBlade = p.Left;
             into.LeftAlongBlade = p.Along;
+            into.HipTurn = p.Hip;
             into.LeftHand = Mouth(stance);
             into.MouthAxis = MouthAxis(stance);
             into.HeadForward = stance.HeadForward;

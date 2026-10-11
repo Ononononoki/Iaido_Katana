@@ -25,6 +25,7 @@ namespace Iaido_Katana
         private static readonly int ThunderCount = "IaidoKatana_thunder".GetStableHashCode();
         private static readonly int ThunderStop = "IaidoKatana_thunder_stop".GetStableHashCode();
         private static readonly int ThunderPrepKey = "IaidoKatana_thunder_prep".GetStableHashCode();
+        private static readonly int HeavyCount = "IaidoKatana_heavy".GetStableHashCode();
         private static readonly CrouchSettings Crouch = new CrouchSettings();
         private static readonly int SteelHash = Katana.SteelPrefab.GetStableHashCode();
         private static readonly int FlametalHash = Katana.FlametalPrefab.GetStableHashCode();
@@ -118,9 +119,36 @@ namespace Iaido_Katana
             internal Vector3 WrittenHips;
             internal readonly StanceSolver.ElbowMemory Elbows = new StanceSolver.ElbowMemory(); // the elbows turn smoothly
             internal bool RollSheathed;        // the katana rests in the scabbard through a roll
+            internal float HeavyAt = -9f;      // when this player's last heavy attack began (its clip is the combo's third)
+            internal int SeenHeavy = -1;
             internal GameObject HiddenHand;    // the katana in the hand, hidden meanwhile
             internal float SpineLogAt;         // the next debug line of the animator's spine
         }
+
+        // the local player started a heavy attack on the upper body layer, whose clip is also the combo's third cut:
+        // mark it here and tell the other clients
+        internal static void StartHeavy(Player player)
+        {
+            var s = StateOf(player);
+            s.HeavyAt = Time.time;
+            var zdo = NViewOf(player)?.GetZDO();
+            if (zdo == null) return;
+            int count = zdo.GetInt(HeavyCount, 0) + 1;
+            zdo.Set(HeavyCount, count, false);
+            s.SeenHeavy = count;
+        }
+
+        // another client's player started a heavy attack
+        private static void WatchHeavy(Player player, State s)
+        {
+            var nview = NViewOf(player);
+            if (!nview || !nview.IsValid() || nview.IsOwner()) return;
+            int count = nview.GetZDO().GetInt(HeavyCount, 0);
+            if (s.SeenHeavy >= 0 && count != s.SeenHeavy) s.HeavyAt = Time.time;
+            s.SeenHeavy = count;
+        }
+
+        private const float HeavyWindow = 0.6f; // the heavy's clip shows up this soon after it began
 
         // the local player started the thunderclap: pose it here and tell the other clients
         internal static void StartThunder(Player player, float prep)
@@ -390,14 +418,33 @@ namespace Iaido_Katana
         // the parry's cut began: a glint at the scabbard mouth
         private static void SlashBegins(State s) => KatanaFx.Glint(Mouth(s));
 
-        // which greatsword clip the base layer is playing or blending into: a cut of the combo (step 0 to 2, and how far
-        // into its clip), or another attack (the heavy one)
-        private static bool AttackClip(Animator animator, out int step, out float clipTime, out bool other)
+        // which swing clip is playing or blending in: a cut of the combo (step 0 to 2, and how far into its clip, in the
+        // time its keys are written in), the heavy one, or another attack. the upper body layer's swings (Swing.UpperBody)
+        // first, then the base layer's greatsword and sledge swings
+        private static bool AttackClip(Animator animator, State s, out int step, out float clipTime, out bool other)
         {
             step = -1;
             clipTime = 0f;
             other = false;
             if (!animator) return false;
+            if (animator.layerCount > 1)
+            {
+                bool nextUp = animator.IsInTransition(1);
+                var up = nextUp ? animator.GetNextAnimatorStateInfo(1) : animator.GetCurrentAnimatorStateInfo(1);
+                if (nextUp) animator.GetNextAnimatorClipInfo(1, ClipBuffer);
+                else animator.GetCurrentAnimatorClipInfo(1, ClipBuffer);
+                foreach (var clip in ClipBuffer)
+                {
+                    if (!clip.clip) continue;
+                    int i = System.Array.IndexOf(Moves.UpperClips, clip.clip.name);
+                    if (i < 0) continue;
+                    // the heavy plays the combo's third clip: it is the heavy when one just began, or still going
+                    bool heavy = i == 2 && (s.Move == 1 && s.MoveStep == Moves.HeavyStep || Time.time - s.HeavyAt < HeavyWindow);
+                    step = heavy ? Moves.HeavyStep : i;
+                    clipTime = Moves.KeyTime(step, up.normalizedTime * clip.clip.length);
+                    return true;
+                }
+            }
             bool next = animator.IsInTransition(0);
             var info = next ? animator.GetNextAnimatorStateInfo(0) : animator.GetCurrentAnimatorStateInfo(0);
             if (next) animator.GetNextAnimatorClipInfo(0, ClipBuffer);
@@ -525,6 +572,8 @@ namespace Iaido_Katana
         // ready stance only rests on these, so swings, emotes, sitting and swimming leave it on their own
         internal static bool IsReadyClip(string name, bool running) =>
             name == "Greatsword Idle" || name == "Walk New Greatsword" || name == "Greatsword Crouch Idle" || name == "Greatsword Sneak Walk"
+            || name == "IdleTweaked" || name == "Walk New Sword Right" || name == "Crouch Idle" || name == "Sneak walk" // one-handed (Swing.OneHandedMoves)
+            || running && (name.StartsWith("Jog New Sword Right") || name == "Run New Sword Right" || name.StartsWith("Jog Strafe Left") || name == "Jog backward")
             || name.StartsWith("Greatsword Strafe") || name.StartsWith("Great sword walk") || name.StartsWith("Block")
             || running && (name.StartsWith("Jog New Greatsword") || name == "Greatsword Jog" || name == "Run New Greatsword" || name.StartsWith("Greatsword Jump"));
 
@@ -654,6 +703,7 @@ namespace Iaido_Katana
 
             // the flametal thunderclap: its own timeline over the stance, with the crouch
             WatchThunder(player, s);
+            WatchHeavy(player, s);
             float thunderTime = s.ThunderStart < 0f ? -1f : Time.time - s.ThunderStart;
             bool thunder = thunderTime >= 0f && thunderTime < Thunder.Length(s.ThunderPrep) && katana && !player.IsDead();
             if (s.ThunderStart >= 0f && !thunder) EndThunder(player, s);
@@ -664,7 +714,7 @@ namespace Iaido_Katana
             float clipTime = 0f;
             int step = -1;
             bool otherAttack = false;
-            bool attacking = alive && AttackClip(AnimatorOf(player), out step, out clipTime, out otherAttack);
+            bool attacking = alive && AttackClip(AnimatorOf(player), s, out step, out clipTime, out otherAttack);
             bool combo = attacking && !otherAttack && Moves.OwnCuts && !thunder && !slashing;
             if (combo)
             {
@@ -687,7 +737,9 @@ namespace Iaido_Katana
                              || (thunder && thunderTime >= s.ThunderPrep && thunderTime < s.ThunderPrep + Thunder.Cut)
                              || (s.Move == 1 && Moves.InCut(s.MoveStep, clipTime)));
             // the hips and legs stand on the cut's own footing during the katana's cuts, the thunderclap has its crouch
-            float bodyWant = s.Move == 1 ? 1f : 0f;
+            // the cut's own footing (and the heavy's step) while standing. walking or running under an upper body swing
+            // the legs are the game's walk, and only the hips turn into the cut
+            float bodyWant = s.Move == 1 ? (Plugin.UpperBodySwings.Value ? Standing(player) : 1f) : 0f;
             s.Body = thunder ? 0f : Mathf.MoveTowards(s.Body, bodyWant, Time.deltaTime / (bodyWant > s.Body ? BodyIn : BodyOut));
 
             // the stance: while blocking, during the katana's own moves, or at rest on the idle and walk clips
@@ -741,6 +793,7 @@ namespace Iaido_Katana
             {
                 Thunder.Sample(thunderTime, s.ThunderPrep, Settings, SlashSettings, out crouch);
                 CopyPose(SlashSettings, Settings);
+                Crouch.HipTurn = Settings.HipTurn; // the hips turn into the cut
             }
             else if (slashing)
             {
@@ -768,6 +821,7 @@ namespace Iaido_Katana
             s.LastPose = Moves.FromSettings(Settings);
             s.LastSheathed = !bladeOut && !thunder;
             if (s.Body > 0f) Moves.Footing(s.MoveStep, s.Move == 1 ? clipTime : 0f, Footing); // with the heavy attack's step
+            Footing.HipTurn = Settings.HipTurn; // the hips turn into the cut
             var full = FullPose(player, s, crouch, s.Move == 1, s.Body > 0f ? Footing : Crouch, s.Body);
             var fullHips = s.Hips.localPosition;
             FollowBlade(player, s);
@@ -865,11 +919,18 @@ namespace Iaido_Katana
                 Sink(player, s, crouch, legs);
                 hipTip = StanceSolver.Turn(root, QMath.Euler(legs.HipPitch * crouch, legs.HipTurn * crouch, 0f));
             }
+            // walking under a cut: the hips still turn into it, the feet stay where the walk put them
+            float drive = restSpine ? Settings.HipTurn * (1f - body) : 0f;
+            if (drive != 0f)
+            {
+                Drive(player, s, drive);
+                hipTip = QMath.Mul(StanceSolver.Turn(root, QMath.Euler(0f, drive, 0f)), hipTip);
+            }
             var turn = StanceSolver.Spine(root, Settings);
             var half = StanceSolver.Half(turn);
             b[Spine1].rotation = QMath.Mul(half, b[Spine1].rotation);
             b[Spine2].rotation = QMath.Mul(half, b[Spine2].rotation);
-            if (Settings.HeadForward) b[Neck].rotation = QMath.Mul(QMath.Conj(QMath.Mul(turn, hipTip)), b[Neck].rotation);
+            if (Settings.HeadForward) b[Neck].rotation = QMath.Mul(QMath.Conj(QMath.Mul(StanceSolver.Head(root, Settings), hipTip)), b[Neck].rotation);
 
             var right = ArmOf(b[RArm], b[RFore], b[RHand]);
             var left = ArmOf(b[LArm], b[LFore], b[LHand]);
@@ -884,6 +945,43 @@ namespace Iaido_Katana
             b[LHand].rotation = left.Hand;
             for (int i = 0; i < b.Length; i++) Pose[i] = b[i].localRotation;
             return Pose;
+        }
+
+        // the hips turned about the body's upright by degrees, each leg back onto the foot it stood on
+        private static void Drive(Player player, State s, float degrees)
+        {
+            var root = player.transform.rotation;
+            var rootPos = player.transform.position;
+            var b = s.Bones;
+            var left = ArmOf(b[LUp], b[LLow], b[LFoot]);
+            var right = ArmOf(b[RUp], b[RLow], b[RFoot]);
+            b[HipsBone].rotation = QMath.Mul(StanceSolver.Turn(root, QMath.Euler(0f, degrees, 0f)), b[HipsBone].rotation);
+            var leftNow = ArmOf(b[LUp], b[LLow], b[LFoot]);
+            StanceSolver.Leg(ref leftNow, left, rootPos, root, Vector3.zero, 0f, Vector3.zero, 0f);
+            b[LUp].rotation = leftNow.Upper;
+            b[LLow].rotation = leftNow.Lower;
+            b[LFoot].rotation = leftNow.Hand;
+            var rightNow = ArmOf(b[RUp], b[RLow], b[RFoot]);
+            StanceSolver.Leg(ref rightNow, right, rootPos, root, Vector3.zero, 0f, Vector3.zero, 0f);
+            b[RUp].rotation = rightNow.Upper;
+            b[RLow].rotation = rightNow.Lower;
+            b[RFoot].rotation = rightNow.Hand;
+        }
+
+        private static int _forwardSpeed, _sidewaySpeed;
+
+        // 1 standing still, 0 walking or faster, from the animator's speed (every client has it)
+        private static float Standing(Player player)
+        {
+            var animator = AnimatorOf(player);
+            if (!animator) return 1f;
+            if (_forwardSpeed == 0)
+            {
+                _forwardSpeed = Animator.StringToHash("forward_speed");
+                _sidewaySpeed = Animator.StringToHash("sideway_speed");
+            }
+            float f = animator.GetFloat(_forwardSpeed), side = animator.GetFloat(_sidewaySpeed);
+            return 1f - Mathf.Clamp01((Mathf.Sqrt(f * f + side * side) - 0.2f) / 0.6f);
         }
 
         // hips down and tipped, then each leg onto its foot, weight 0 leaves them as they are
@@ -932,6 +1030,8 @@ namespace Iaido_Katana
             to.MouthAxis = from.MouthAxis;
             to.RightElbow = from.RightElbow; // the thunderclap's crouch has its own left elbow
             to.LeftElbow = from.LeftElbow;
+            to.HipTurn = from.HipTurn;
+            to.HeadDown = from.HeadDown;
             to.Attach = from.Attach;
         }
 
@@ -945,6 +1045,8 @@ namespace Iaido_Katana
             into.SheathAt = null;
             into.LeftHand = DefaultLeftHand;
             into.MouthAxis = Vector3.zero;
+            into.HipTurn = 0f;
+            into.HeadDown = 0f;
             into.RightElbow = Defaults.RightElbow;
             into.LeftElbow = Defaults.LeftElbow;
             into.EdgeRoll = Defaults.EdgeRoll;

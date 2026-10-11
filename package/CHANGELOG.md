@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2 (beta)
+
+- The Thunderclap ends in a wide horizontal finish.
+- Smoother sheathing, no more jiggle.
+- Recipes use four materials. Both katanas can be refined at the Forge of Potential.
+- Fixed katanas losing durability too fast when blocking.
+
 ## 0.1.1 (beta)
 
 - Natural arm poses in the stance, the parry, the sheathing and the Thunderclap.

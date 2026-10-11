@@ -53,6 +53,29 @@ namespace Iaido_Katana
             }
         }
 
+        // a katana's normal block (not a perfect parry) wears it like its base sword's block would (Katana.BlockWearScale)
+        [HarmonyPatch(typeof(Humanoid), "BlockAttack")]
+        private static class BlockWear
+        {
+            private static void Prefix(Humanoid __instance, out (ItemDrop.ItemData item, float before) __state)
+            {
+                var blocker = Katana.CurrentBlocker(__instance);
+                __state = Katana.IsKatana(blocker) && !Katana.IsKatanaParry(__instance) ? (blocker, blocker.m_durability) : (null, 0f);
+            }
+
+            private static void Postfix((ItemDrop.ItemData item, float before) __state)
+            {
+                var item = __state.item;
+                if (item == null || item.m_durability >= __state.before) return;
+                float basePower = Katana.BaseBlockPower.TryGetValue(item.m_shared.m_name, out float power) ? power : 0f;
+                float lost = __state.before - item.m_durability;
+                float kept = lost * Katana.BlockWearScale(item.m_shared.m_blockPower, basePower);
+                item.m_durability = __state.before - kept;
+                if (Plugin.LogCounters.Value)
+                    Plugin.Log.LogInfo($"block wear: {lost:0.00} by the game, {kept:0.00} like its base sword (block {item.m_shared.m_blockPower:0}, base {basePower:0})");
+            }
+        }
+
         // a katana swing starts, so the time-warp follows it
         [HarmonyPatch(typeof(Humanoid), nameof(Humanoid.StartAttack))]
         private static class WarpStart
@@ -73,7 +96,15 @@ namespace Iaido_Katana
                 if (Plugin.LogCounters.Value)
                     Plugin.Log.LogInfo($"katana {(secondaryAttack ? "heavy" : "normal")} swing started: animation {attack.m_attackAnimation}, chain {ChainLevel(attack)}");
                 Counter.EndSwing();
-                SwingWarp.Begin($"{attack.m_attackAnimation}{(secondaryAttack ? "" : ChainLevel(attack).ToString())}",
+                string key = $"{attack.m_attackAnimation}{(secondaryAttack ? "" : ChainLevel(attack).ToString())}";
+                if (attack.m_attackAnimation.StartsWith(Plugin.UpperSwing))
+                {
+                    // on the upper body layer the legs keep walking: an even pace, and every client learns it is the heavy
+                    if (secondaryAttack && __instance is Player player) IaiStance.StartHeavy(player);
+                    SwingWarp.BeginEven(key, ChainLevel(attack), secondaryAttack ? Plugin.HeavyDuration.Value : 0f);
+                    return;
+                }
+                SwingWarp.Begin(key,
                     secondaryAttack ? Plugin.HeavySpeed.Value : 1f,
                     secondaryAttack ? Plugin.HeavyStrikeBoost.Value : Plugin.NormalStrikeBoost.Value,
                     secondaryAttack ? Plugin.HeavyDuration.Value : 0f);

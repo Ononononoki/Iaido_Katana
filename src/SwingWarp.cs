@@ -16,13 +16,20 @@ namespace Iaido_Katana
             ["greatsword1"] = 0.50f,
             ["greatsword2"] = 0.64f,
             ["battleaxe_attack"] = 1.40f,
-            ["swing_sledge"] = 1.33f
+            ["swing_sledge"] = 1.33f,
+            ["shovel0"] = 0.301f, // the upper body swings (their clips' hit events)
+            ["shovel1"] = 0.314f,
+            ["shovel2"] = 0.340f
         };
+
+        // real seconds to the hit the katana's upper body swings keep: the greatsword swings' of 0.1.1
+        private static readonly float[] EvenHitSeconds = { 0.62f, 0.50f, 0.64f };
 
         // real seconds from the hit until the swing ends (recovery at normal speed), measured and kept up to date
         private static readonly Dictionary<string, float> AfterHitTimes = new Dictionary<string, float>
         {
-            ["swing_sledge"] = 0.66f
+            ["swing_sledge"] = 0.66f,
+            ["shovel2"] = 0.66f
         };
 
         private const float EntryDelay = 0.03f; // the animator needs a frame or two to enter the swing
@@ -40,6 +47,7 @@ namespace Iaido_Katana
         private static float _gameSpeed;
         private static Animator _animator;
         private static bool _cleared;
+        private static bool _even;
 
         internal static bool Active => _active && !_hitDone;
 
@@ -58,7 +66,19 @@ namespace Iaido_Katana
             _gameSpeed = 1f; // a swing starts at normal speed, whatever an earlier swing or the counter left behind
             _animator = null;
             _cleared = false;
+            _even = false;
             _active = true;
+        }
+
+        // an upper body swing (Swing.UpperBody): the legs walk on the same animator, so its speed stays even up to the hit
+        // (a slow windup and fast strike would make the walk stutter, the katana's own cut keys give that shape). a normal
+        // swing reaches its hit as late as the greatsword's did, the heavy fills total seconds
+        internal static void BeginEven(string key, int chain, float total)
+        {
+            float hit = HitTimes.TryGetValue(key, out float h) ? h : 0.3f;
+            float pace = total > 0f ? 1f : hit / EvenHitSeconds[Mathf.Clamp(chain, 0, EvenHitSeconds.Length - 1)];
+            Begin(key, pace, 1f, total);
+            _even = true;
         }
 
         internal static void OnHit()
@@ -121,6 +141,13 @@ namespace Iaido_Katana
         private static float SpeedAt(float animTime)
         {
             bool known = HitTimes.TryGetValue(_key, out float hitTime);
+            if (_even)
+            {
+                if (!known || !Plugin.SwingTimeWarp.Value) return -1f;
+                if (_total > 0f && AfterHitTimes.TryGetValue(_key, out float after))
+                    return hitTime / Mathf.Max(0.2f, _total - after - EntryDelay);
+                return _pace;
+            }
             float share = Plugin.WindupShare.Value;
             float windup = Plugin.WindupSpeed.Value;
             float strike = Katana.StrikeSpeed(share, windup);
