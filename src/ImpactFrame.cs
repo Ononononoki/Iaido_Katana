@@ -359,7 +359,7 @@ namespace Iaido_Katana
 
         private const float ClickSeconds = 0.12f;
 
-        private static void PlayLayer(Vector3 point, string name, float pitch, float volume, float cut, bool spatial = false)
+        internal static void PlayLayer(Vector3 point, string name, float pitch, float volume, float cut, bool spatial = false)
         {
             if (string.IsNullOrEmpty(name) || volume <= 0f || !ZNetScene.instance) return;
             var prefab = ZNetScene.instance.GetPrefab(name);

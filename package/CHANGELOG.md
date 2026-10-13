@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+- Custom full-body animations: a draw cut out of the scabbard, an overhead cut and a downward diagonal cut, each with a slow windup and a lightning-fast strike.
+- New heavy attack: drawn up into a high stance, charged, then a huge cut straight down with a long lunge. It has its own version when the blade is already out.
+- Smoother sheathing after two-handed cuts.
+- Greatswords and sledges keep their own animations.
+- `Swing.CustomAnimations` false brings back the older animations borrowed from Krom and Stagbreaker.
+
 ## 0.1.2 (beta)
 
 - The Thunderclap ends in a wide horizontal finish.

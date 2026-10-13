@@ -108,6 +108,118 @@ namespace Iaido_Katana
             if (star) Object.Destroy(star);
         }
 
+        // a full-body cut's whoosh as its strike begins, heard around the player: a sword's swing played quick and high,
+        // and a knife's under it for the edge. the game's own swing sound still comes with the greatsword swing's trail
+        private const string SlashHigh = "sfx_sword_swing", SlashEdge = "sfx_knife_swing";
+
+        internal static void SlashSound(Vector3 point, bool flametal)
+        {
+            float volume = Plugin.SlashSoundVolume.Value;
+            if (volume <= 0f) return;
+            ImpactFrame.PlayLayer(point, SlashHigh, flametal ? 1.15f : 1.25f, volume, 0f, true);
+            ImpactFrame.PlayLayer(point, SlashEdge, 0.9f, volume * 0.7f, 0f, true);
+        }
+
+        // where a full-body cut lands, on the hitting player's own screen: a thin straight line of light along the cut
+        // through the blade, held bright for a moment and then fading slowly (the inspiration clip's golden slash), a
+        // flash of light and a small camera jolt
+        private const float MarkHold = 0.12f, MarkFade = 0.6f, MarkGrow = 0.04f, MarkLength = 2.6f, MarkWidth = 0.07f;
+        private static Material _markMaterial;
+
+        internal static void SlashMark(Vector3 point, Vector3 along, bool flametal)
+        {
+            if (!Plugin.SlashMarkOn.Value || !Plugin.Instance) return;
+            var material = MarkMaterial();
+            if (!material || along == Vector3.zero) return;
+            var mark = new GameObject("IaidoKatana_slashmark", typeof(MeshFilter), typeof(MeshRenderer));
+            mark.transform.position = point;
+            var mesh = new Mesh { name = "IaidoKatana_slashmark" };
+            mesh.vertices = new[] { new Vector3(-0.5f, -0.5f, 0f), new Vector3(0.5f, -0.5f, 0f), new Vector3(0.5f, 0.5f, 0f), new Vector3(-0.5f, 0.5f, 0f) };
+            mesh.uv = new[] { new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(1f, 1f), new Vector2(0f, 1f) };
+            mesh.triangles = new[] { 0, 2, 1, 0, 3, 2 };
+            mesh.RecalculateBounds();
+            mark.GetComponent<MeshFilter>().sharedMesh = mesh;
+            var renderer = mark.GetComponent<MeshRenderer>();
+            renderer.sharedMaterial = material;
+            renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            renderer.receiveShadows = false;
+            var light = mark.AddComponent<Light>();
+            light.type = LightType.Point;
+            light.color = flametal ? new Color(0.7f, 0.85f, 1f) : new Color(1f, 0.85f, 0.55f);
+            light.range = 5f;
+            light.intensity = 0f;
+            var colour = flametal ? FlametalTrail[0] : SteelTrail[0];
+            Plugin.Instance.StartCoroutine(PlayMark(mark, mesh, light, along.normalized, colour));
+            var camera = GameCamera.instance;
+            if (camera && Plugin.SlashShake.Value > 0f) camera.AddShake(camera.transform.position, 20f, Plugin.SlashShake.Value, false);
+        }
+
+        private static IEnumerator PlayMark(GameObject mark, Mesh mesh, Light light, Vector3 along, Color colour)
+        {
+            float start = Time.time;
+            var colours = new Color[4];
+            while (mark)
+            {
+                float t = Time.time - start;
+                if (t >= MarkHold + MarkFade) break;
+                // the line lies along the cut, its face turned to the camera
+                var camera = Camera.main;
+                if (camera)
+                {
+                    var toCamera = camera.transform.position - mark.transform.position;
+                    var face = toCamera - along * Vector3.Dot(toCamera, along);
+                    if (face.sqrMagnitude > 1e-6f) mark.transform.rotation = Quaternion.LookRotation(-face, along);
+                }
+                float grow = Mathf.Clamp01(t / MarkGrow);
+                float fade = t < MarkHold ? 1f : 1f - (t - MarkHold) / MarkFade;
+                fade *= fade;
+                mark.transform.localScale = new Vector3(MarkWidth * (1f + 0.5f * (1f - fade)), MarkLength * (0.4f + 0.6f * grow), 1f);
+                var c = Color.Lerp(new Color(1f, 1f, 1f, 1f), colour, Mathf.Clamp01(t / MarkHold)); // white hot first
+                c.a = fade;
+                for (int i = 0; i < 4; i++) colours[i] = c;
+                mesh.colors = colours;
+                light.intensity = 4f * fade * (t < MarkHold ? 1f : 0.5f);
+                yield return null;
+            }
+            if (mark) Object.Destroy(mark);
+            Object.Destroy(mesh);
+        }
+
+        // the trail's own additive material with a thin line drawn into it, bright in the middle, sharp at both ends
+        private static Material MarkMaterial()
+        {
+            if (_markMaterial) return _markMaterial;
+            var template = TrailMaterialOf("THSwordKrom");
+            if (!template)
+            {
+                Plugin.Log.LogWarning("slash mark: the trail material was not found, no mark");
+                return null;
+            }
+            _markMaterial = new Material(template) { name = "IaidoKatana_slashmark", mainTexture = LineTexture() };
+            if (_markMaterial.HasProperty("_TintColor")) _markMaterial.SetColor("_TintColor", new Color(0.6f, 0.58f, 0.55f, 0.5f));
+            return _markMaterial;
+        }
+
+        private static Texture2D LineTexture()
+        {
+            const int w = 16, h = 128;
+            var texture = new Texture2D(w, h, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, name = "IaidoKatana_line" };
+            var pixels = new Color32[w * h];
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    float u = (x + 0.5f) / w * 2f - 1f, v = (y + 0.5f) / h * 2f - 1f;
+                    float taper = Mathf.Clamp01(1f - Mathf.Abs(v)); // widest in the middle, to a point at both ends
+                    float across = Mathf.Abs(u) / Mathf.Max(0.05f, taper);
+                    float core = Mathf.Exp(-across * across * 6f);
+                    byte a = (byte)(255f * Mathf.Clamp01(core * Mathf.Sqrt(taper)));
+                    pixels[y * w + x] = new Color32(a, a, a, a);
+                }
+            texture.SetPixels32(pixels);
+            texture.Apply(false, true);
+            return texture;
+        }
+
         // the trail's own additive material with a four pointed star drawn into it
         private static Material GlintMaterial()
         {
@@ -331,6 +443,17 @@ namespace Iaido_Katana
         private const float MaxTurn = 6f;   // degrees between two points, more is filled in along the arc
         private const int MaxPoints = 120;
         private const float BaseAlong = 0.55f; // past the guard, along the katana mesh from the pommel
+        // a full-body cut's ribbon (Bold): an anime slash, longer lived, a white hot edge out past the tip fading in
+        // toward the guard, held bright for a moment before it fades
+        private const float BoldLife = 0.32f, BoldHold = 0.3f, BoldMid = 0.7f, BoldTip = 1.06f, BoldWhite = 0.65f;
+        private bool _bold;
+
+        // on with a full-body cut, and kept until its ribbon has faded, so the points already drawn do not change look
+        internal void Bold(bool on)
+        {
+            if (on) _bold = true;
+            else if (_points.Count == 0) _bold = false;
+        }
 
         private struct Point
         {
@@ -401,8 +524,9 @@ namespace Iaido_Katana
                 }
                 _points.Add(point);
             }
+            float life = _bold ? BoldLife : Life;
             int old = 0;
-            while (old < _points.Count && (now - _points[old].Time >= Life || _points.Count - old > MaxPoints)) old++;
+            while (old < _points.Count && (now - _points[old].Time >= life || _points.Count - old > MaxPoints)) old++;
             if (old > 0) _points.RemoveRange(0, old);
             if (_points.Count < 2)
             {
@@ -418,23 +542,25 @@ namespace Iaido_Katana
             _vertices.Clear();
             _colours.Clear();
             _triangles.Clear();
-            for (int i = 0; i < _points.Count; i++)
-            {
-                var p = _points[i];
-                _vertices.Add(p.Pos + p.Rot * (baseLocal * p.Scale));
-                _vertices.Add(p.Pos + p.Rot * (tipLocal * p.Scale));
-                var colour = Stop(stops, (now - p.Time) / Life);
-                _colours.Add(colour);
-                _colours.Add(colour);
-                if (i == 0) continue;
-                int a = (i - 1) * 2;
-                _triangles.Add(a);
-                _triangles.Add(a + 1);
-                _triangles.Add(a + 2);
-                _triangles.Add(a + 2);
-                _triangles.Add(a + 1);
-                _triangles.Add(a + 3);
-            }
+            if (_bold) BoldRibbon(stops, baseLocal, tipLocal, now);
+            else
+                for (int i = 0; i < _points.Count; i++)
+                {
+                    var p = _points[i];
+                    _vertices.Add(p.Pos + p.Rot * (baseLocal * p.Scale));
+                    _vertices.Add(p.Pos + p.Rot * (tipLocal * p.Scale));
+                    var colour = Stop(stops, (now - p.Time) / Life);
+                    _colours.Add(colour);
+                    _colours.Add(colour);
+                    if (i == 0) continue;
+                    int a = (i - 1) * 2;
+                    _triangles.Add(a);
+                    _triangles.Add(a + 1);
+                    _triangles.Add(a + 2);
+                    _triangles.Add(a + 2);
+                    _triangles.Add(a + 1);
+                    _triangles.Add(a + 3);
+                }
             // the vertices are in the world, so the ribbon's own object sits at the world's origin
             _object.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
             _mesh.Clear();
@@ -443,6 +569,37 @@ namespace Iaido_Katana
             _mesh.SetTriangles(_triangles, 0);
             _mesh.RecalculateBounds();
             _renderer.enabled = true;
+        }
+
+        // three rows along the blade: clear at the base, the trail's colour at BoldMid, white hot at the edge past the tip
+        private void BoldRibbon(Color[] stops, Vector3 baseLocal, Vector3 tipLocal, float now)
+        {
+            var midLocal = baseLocal + (tipLocal - baseLocal) * BoldMid;
+            var edgeLocal = baseLocal + (tipLocal - baseLocal) * BoldTip;
+            for (int i = 0; i < _points.Count; i++)
+            {
+                var p = _points[i];
+                _vertices.Add(p.Pos + p.Rot * (baseLocal * p.Scale));
+                _vertices.Add(p.Pos + p.Rot * (midLocal * p.Scale));
+                _vertices.Add(p.Pos + p.Rot * (edgeLocal * p.Scale));
+                float age = (now - p.Time) / BoldLife;
+                var colour = Stop(stops, Mathf.Clamp01((age - BoldHold) / (1f - BoldHold))); // held bright, then fading
+                _colours.Add(new Color(colour.r, colour.g, colour.b, 0f));
+                _colours.Add(colour);
+                _colours.Add(Color.Lerp(colour, new Color(1f, 1f, 1f, colour.a), BoldWhite));
+                if (i == 0) continue;
+                int a = (i - 1) * 3;
+                for (int row = 0; row < 2; row++)
+                {
+                    int r = a + row;
+                    _triangles.Add(r);
+                    _triangles.Add(r + 1);
+                    _triangles.Add(r + 3);
+                    _triangles.Add(r + 3);
+                    _triangles.Add(r + 1);
+                    _triangles.Add(r + 4);
+                }
+            }
         }
 
         // the colour at u (0 new, 1 at the end of its life) along the stops

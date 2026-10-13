@@ -19,7 +19,8 @@ namespace Iaido_Katana
             ["swing_sledge"] = 1.33f,
             ["shovel0"] = 0.301f, // the upper body swings (their clips' hit events)
             ["shovel1"] = 0.314f,
-            ["shovel2"] = 0.340f
+            ["shovel2"] = 0.340f,
+            ["greatsword_secondary"] = 1.33f // the katana's heavy with the blade out, its clip on the sledge's clock (hit event 1.296)
         };
 
         // real seconds to the hit the katana's upper body swings keep: the greatsword swings' of 0.1.1
@@ -29,7 +30,8 @@ namespace Iaido_Katana
         private static readonly Dictionary<string, float> AfterHitTimes = new Dictionary<string, float>
         {
             ["swing_sledge"] = 0.66f,
-            ["shovel2"] = 0.66f
+            ["shovel2"] = 0.66f,
+            ["greatsword_secondary"] = 0.65f // our 1.85 s clip leaves 0.55 s after the hit, plus the blend out (estimated)
         };
 
         private const float EntryDelay = 0.03f; // the animator needs a frame or two to enter the swing

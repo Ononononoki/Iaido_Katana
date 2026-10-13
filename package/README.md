@@ -1,15 +1,15 @@
-# Iaido Katana (beta)
+# Iaido Katana
 
 **A katana that wins on the parry. Its own slashes are light, but every perfect parry strikes back on its own.**
 
-> **Beta, work in progress.** Numbers, looks and effects may still change, and the attack animations may get an overhaul later (not certain). Feedback is welcome.
+> Early version (0.2.0), bugs are possible. Please report them on [GitHub](https://github.com/Ononononoki/Iaido_Katana/issues).
 
 ## What it does
 
 - **Steel Katana.** Two-handed, Swords skill, Plains tier. Its own damage is 40% of a Black Metal sword.
 - **Counter.** A perfect parry staggers the attacker and the katana strikes back on its own, like a Black Metal sword (1.5 times that at Block 100). Parried arrows, spears and spells send half of it back. The katana barely blocks, so only a perfect parry stops a hit.
 - **Parry timing.** Katanas parry within 200 ms (vanilla 250). An optional precise mode gives 150 ms and counters 15% stronger, each player's own choice.
-- **Slashes.** A slow windup and a lightning-fast strike, on the vanilla beat. The heavy attack is an overhead strike for 6 times the damage.
+- **Custom animations.** Full-body cuts made for the katana: a draw cut out of the scabbard, an overhead cut and a downward diagonal cut, each with a slow windup and a lightning-fast strike on the vanilla beat. The heavy attack draws up into a high stance and cuts straight down for 6 times the damage, from the scabbard or with the blade already out. Set `Swing.CustomAnimations` to false for the older animations borrowed from Krom and Stagbreaker.
 - **Iai stance and scabbard.** In an iai stance the katana rests sheathed at the left hip. A perfect parry draws it and cuts. After fighting it is flicked clean and slowly sheathed. It stays sheathed through a roll, and put away it stays at the hip. Other players see it too.
 - **Impact frame.** A landed counter flashes as a black and white ink picture, with a short freeze, a camera jolt and a metal crash. Only you see it.
 
@@ -51,6 +51,7 @@ The file is `BepInEx/config/onononoki.Iaido_Katana.cfg`. Gameplay settings are s
 | `Thunderclap.Distance` | 13 | Dash length in meters |
 | `Thunderclap.DamageMultiplier` | 10 | Damage to each creature on the way |
 | `Stance.*`, `Impact.*`, `Visual.*` | | Yours. Stance, impact frame and effects |
+| `Swing.CustomAnimations` | true | The katana's own animations, false for the older borrowed ones |
 | `Swing.*` | | Swing timing is yours, the swing animations come from the server |
 
 ## Installation and compatibility

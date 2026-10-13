@@ -52,6 +52,7 @@ namespace Iaido_Katana
         private const float SettleSeconds = 0.2f; // the sheathed blade and its scabbard settling into the stance
         private const float FollowEase = 0.1f;    // the scabbard taking up the sliding blade
         private const float ElbowTurnSpeed = 900f; // degrees a second an elbow may swing round the arm's line
+        internal const float FullElbowTurnSpeed = 2500f; // in a full-body cut's 80 ms strike the whole arm whips round
         private static readonly CrouchSettings Footing = new CrouchSettings();
         private static readonly Quaternion[] KeptBody = new Quaternion[RFoot - HipsBone + 1];
 
@@ -123,7 +124,23 @@ namespace Iaido_Katana
             internal int SeenHeavy = -1;
             internal GameObject HiddenHand;    // the katana in the hand, hidden meanwhile
             internal float SpineLogAt;         // the next debug line of the animator's spine
+            internal readonly FootPlant Feet = new FootPlant(); // a full-body cut's feet on the ground
+            internal readonly CrouchSettings LastFooting = new CrouchSettings(); // what it showed last, held while the body fades out
+            internal bool HasLastFooting;
+            internal bool MoveBlend;           // a full-body cut that began from the game's pose eases in from it
+            internal bool StrikeSounded;       // its whoosh played
+            internal bool FadeCut;             // a full-body cut handed over to one of the game's swings fades out from FadePose
+            internal Moves.Pose FadePose;
+            internal float FadeHead, LastHead; // and the head's look down, held with it
+            internal bool MarkPending;         // a landed full-body cut leaves its slash mark once the pose is written
+            internal bool OwnClip;             // one of the katana's own animation clips is playing (Swing.CustomAnimations)
+            internal int OwnStep;              // the combo step (or the heavy) it plays
+            internal bool WasOwnClip;          // and was last frame, at this clip time
+            internal float LastOwnTime;
         }
+
+        private const float FullBlendIn = 0.08f; // seconds a full-body cut takes to take over from the game's pose
+        private const float FullFadeOut = 0.1f;  // and to hand over to the game's next swing
 
         // the local player started a heavy attack on the upper body layer, whose clip is also the combo's third cut:
         // mark it here and tell the other clients
@@ -426,6 +443,7 @@ namespace Iaido_Katana
             step = -1;
             clipTime = 0f;
             other = false;
+            s.OwnClip = false;
             if (!animator) return false;
             if (animator.layerCount > 1)
             {
@@ -465,6 +483,15 @@ namespace Iaido_Katana
                     clipTime = info.normalizedTime * clip.clip.length;
                     return true;
                 }
+                if (ClipSwap.IsOwn(name))
+                {
+                    // one of the katana's own clips (Swing.CustomAnimations): a swing too, with the full-body cut's effects
+                    s.OwnClip = true;
+                    s.OwnStep = ClipSwap.StepOf(name);
+                    clipTime = info.normalizedTime * clip.clip.length;
+                    other = true;
+                    return true;
+                }
                 if (name.Contains("Attack")) other = true;
             }
             return other;
@@ -478,6 +505,10 @@ namespace Iaido_Katana
         {
             s.MoveFrom = s.HasLast ? s.LastPose : Shown(player, s);
             s.MoveFromScabbard = (step == 0 || step == Moves.HeavyStep) && s.HasLast && s.LastSheathed;
+            s.MoveBlend = !s.HasLast;
+            s.StrikeSounded = clipTime >= Moves.FullStrikeAt(step);
+            s.Feet.Reset();
+            if (!Moves.HasFullBody(step)) s.HasLastFooting = false;
             s.Move = 1;
             s.MoveStep = step;
             s.MoveClipStart = clipTime;
@@ -599,6 +630,28 @@ namespace Iaido_Katana
             s.SlashStart += seconds; // after the hold the slash goes on from the same point
         }
 
+        // the local player's swing landed (the game's hit stop began, in the physics step): a full-body cut leaves its
+        // slash mark, made after this frame's pose is written (the physics step can run after the animator)
+        internal static void HitStop(Player player)
+        {
+            if (!States.TryGetValue(player, out var s) || !(s.Move == 1 && Moves.HasFullBody(s.MoveStep) || s.WasOwnClip)) return;
+            s.MarkPending = true;
+        }
+
+        // the mark along the cut, through the blade where it struck
+        private static void SlashMark(Player player, State s)
+        {
+            s.MarkPending = false;
+            if (!s.Attach) return;
+            var rot = s.Attach.rotation;
+            var blade = rot * Vector3.forward;
+            var edge = rot * Vector3.right; // the edge leads the cut
+            KatanaFx.SlashMark(s.Attach.position + blade * HitAlong, edge, RightItem(VisOf(player)) == FlametalHash);
+            if (Plugin.LogCounters.Value) Plugin.Log.LogInfo(s.WasOwnClip ? "own clip cut landed, slash mark shown" : $"full-body cut {s.MoveStep} landed, slash mark shown");
+        }
+
+        private const float HitAlong = 1.2f; // meters along the blade from the grip where a cut is taken to strike
+
         private static readonly ConditionalWeakTable<Player, State> States = new ConditionalWeakTable<Player, State>();
         private static readonly StanceSettings Settings = new StanceSettings();
 
@@ -609,6 +662,11 @@ namespace Iaido_Katana
             int item = RightItem(vis);
             return item == SteelHash || item == FlametalHash;
         }
+
+        // the katana is out of its scabbard as this client shows it: not resting sheathed in the stance and not past the
+        // sheathing's click (the heavy picks its clip by this)
+        internal static bool BladeOut(Player player) =>
+            !States.TryGetValue(player, out var s) || !(s.HasLast && (s.LastSheathed || s.Move == 2 && s.MoveClicked));
 
         internal static bool SlashOn => Plugin.StanceEnabled.Value && Plugin.StanceSlash.Value;
 
@@ -666,6 +724,7 @@ namespace Iaido_Katana
             }
             if (s.Broken || !Bind(player, s)) return;
             StepPose(player, s, katana);
+            if (s.MarkPending) SlashMark(player, s);
             HideHand(player, s, katana && s.RollSheathed);
             UpdateSaya(player, s, katana, back);
             UpdateCrackle(s, katana);
@@ -715,12 +774,22 @@ namespace Iaido_Katana
             int step = -1;
             bool otherAttack = false;
             bool attacking = alive && AttackClip(AnimatorOf(player), s, out step, out clipTime, out otherAttack);
-            bool combo = attacking && !otherAttack && Moves.OwnCuts && !thunder && !slashing;
+            bool combo = attacking && !otherAttack && Moves.Owns(step) && !thunder && !slashing;
             if (combo)
             {
                 if (s.Move != 1 || s.MoveStep != step) StartCombo(player, s, step, clipTime);
             }
-            else if (s.Move == 1) s.Move = 0;
+            else if (s.Move == 1)
+            {
+                // a full-body cut handed over to the game's next swing fades out from where it was, not from the stance
+                if (Moves.HasFullBody(s.MoveStep) && attacking)
+                {
+                    s.FadeCut = true;
+                    s.FadePose = s.LastPose;
+                    s.FadeHead = s.LastHead;
+                }
+                s.Move = 0;
+            }
             if (attacking) s.WasAttacking = true;
             else if (s.WasAttacking)
             {
@@ -730,12 +799,27 @@ namespace Iaido_Katana
             bool rolling = alive && Rolling(player);
             if (s.Move == 2) StepSheathe(player, s, alive && !player.IsBlocking() && !rolling && !thunder && !slashing && !attacking);
             bool moving = s.Move != 0;
+            if (moving || slashing || thunder || !attacking) s.FadeCut = false; // another of the katana's own moves takes over, or the swing ended
             bool bladeOut = slashing || moving || (thunder && thunderTime >= s.ThunderPrep && thunderTime < Thunder.SheathedAt(s.ThunderPrep));
 
             // the trail through each cut: the parry's, the thunderclap's and the combo's
+            // one of the katana's own clips playing: its whoosh, bold trail and slash mark like the full-body cut's
+            bool ownCut = attacking && s.OwnClip && !thunder && !slashing;
+            if (ownCut && (!s.WasOwnClip || clipTime < s.LastOwnTime)) s.StrikeSounded = clipTime >= Moves.FullStrikeAt(s.OwnStep); // a new one began
+            s.WasOwnClip = ownCut;
+            s.LastOwnTime = clipTime;
             Trail(player, s, (slashing && slashTime >= TrailFrom && slashTime < TrailTo)
                              || (thunder && thunderTime >= s.ThunderPrep && thunderTime < s.ThunderPrep + Thunder.Cut)
-                             || (s.Move == 1 && Moves.InCut(s.MoveStep, clipTime)));
+                             || (s.Move == 1 && Moves.InCut(s.MoveStep, clipTime))
+                             || (ownCut && Moves.InFullCut(s.OwnStep, clipTime)));
+            bool fullCut = s.Move == 1 && Moves.HasFullBody(s.MoveStep);
+            s.Trail?.Bold(fullCut || ownCut);
+            // a full-body cut's own whoosh as its strike begins, on every client
+            if ((fullCut || ownCut) && !s.StrikeSounded && clipTime >= Moves.FullStrikeAt(fullCut ? s.MoveStep : s.OwnStep))
+            {
+                s.StrikeSounded = true;
+                KatanaFx.SlashSound(s.Attach.position, RightItem(VisOf(player)) == FlametalHash);
+            }
             // the hips and legs stand on the cut's own footing during the katana's cuts, the thunderclap has its crouch
             // the cut's own footing (and the heavy's step) while standing. walking or running under an upper body swing
             // the legs are the game's walk, and only the hips turn into the cut
@@ -748,8 +832,12 @@ namespace Iaido_Katana
 
             // a block snaps into the stance, sheathing after a swing or when coming to rest takes its time
             float blendIn = moving || (free && (player.IsBlocking() || thunder)) ? Plugin.StanceBlendIn.Value : Plugin.StanceSheathe.Value;
-            float blend = want ? blendIn : Plugin.StanceBlendOut.Value;
-            s.Weight = bladeOut ? 1f : Mathf.MoveTowards(s.Weight, want ? 1f : 0f, blend > 0f ? Time.deltaTime / blend : 1f);
+            float blend = want ? blendIn : s.FadeCut ? FullFadeOut : Plugin.StanceBlendOut.Value;
+            // a full-body cut after one of the game's swings eases in from the game's pose, so nothing snaps
+            bool easeIn = fullCut && s.MoveBlend;
+            s.Weight = bladeOut && !easeIn ? 1f
+                : Mathf.MoveTowards(s.Weight, want ? 1f : 0f, easeIn ? Time.deltaTime / FullBlendIn : blend > 0f ? Time.deltaTime / blend : 1f);
+            if (easeIn && s.Weight >= 1f) s.MoveBlend = false;
             // a roll leaves the katana in its scabbard (the hand lets go of it), until the stance has the hand on the
             // grip again, or a swing or a move takes it
             if (rolling && s.HasHip && Plugin.ScabbardOn.Value) s.RollSheathed = true;
@@ -777,6 +865,8 @@ namespace Iaido_Katana
                 s.HasLast = false;
                 s.Body = 0f;
                 s.Elbows.Has = false;
+                s.FadeCut = false;
+                s.HasLastFooting = false;
                 return;
             }
 
@@ -789,6 +879,7 @@ namespace Iaido_Katana
                 Settings.SheathGrip = s.SheathPos;
             }
             float crouch = 0f;
+            SlashSettings.HeadDown = 0f; // only the thunderclap and the full-body cuts look down, each sets its own
             if (thunder)
             {
                 Thunder.Sample(thunderTime, s.ThunderPrep, Settings, SlashSettings, out crouch);
@@ -810,6 +901,12 @@ namespace Iaido_Katana
                 Moves.Sheathe(Time.time - s.MoveStart, s.MoveHold, Plugin.StanceNoto.Value, s.MoveFrom, Settings, SlashSettings);
                 CopyPose(SlashSettings, Settings);
             }
+            else if (s.FadeCut)
+            {
+                Moves.Settle(s.FadePose, 0f, Settings, SlashSettings); // held where the full-body cut ended
+                SlashSettings.HeadDown = s.FadeHead;
+                CopyPose(SlashSettings, Settings);
+            }
             else if (s.SettleStart >= 0f && Time.time - s.SettleStart < SettleSeconds && s.Weight >= 1f)
             {
                 Moves.Settle(s.SettleFrom, (Time.time - s.SettleStart) / SettleSeconds, Settings, SlashSettings);
@@ -819,14 +916,30 @@ namespace Iaido_Katana
             // what is shown now, for the next move to start from
             s.HasLast = s.Weight >= 0.999f;
             s.LastPose = Moves.FromSettings(Settings);
-            s.LastSheathed = !bladeOut && !thunder;
-            if (s.Body > 0f) Moves.Footing(s.MoveStep, s.Move == 1 ? clipTime : 0f, Footing); // with the heavy attack's step
-            Footing.HipTurn = Settings.HipTurn; // the hips turn into the cut
-            var full = FullPose(player, s, crouch, s.Move == 1, s.Body > 0f ? Footing : Crouch, s.Body);
+            s.LastHead = Settings.HeadDown;
+            s.LastSheathed = !bladeOut && !thunder && !s.FadeCut;
+            if (s.Body > 0f && fullCut)
+            {
+                // a full-body cut: its own feet and hips, the feet kept where they stand while the player moves
+                Moves.Footing(s.MoveStep, clipTime, Footing);
+                Footing.HipTurn = Settings.HipTurn;
+                s.Feet.Step(player.transform.position, player.transform.rotation, Footing, Time.time);
+                CrouchSettings.Lerp(Footing, Footing, 0f, s.LastFooting); // kept, the body fades out from where the cut ended
+                s.HasLastFooting = true;
+            }
+            else if (s.Body > 0f && s.Move != 1 && s.HasLastFooting) CrouchSettings.Lerp(s.LastFooting, s.LastFooting, 0f, Footing);
+            else
+            {
+                if (s.Body > 0f) Moves.Footing(s.MoveStep, s.Move == 1 ? clipTime : 0f, Footing); // with the heavy attack's step
+                Footing.HipTurn = Settings.HipTurn; // the hips turn into the cut
+                if (s.Body <= 0f) s.HasLastFooting = false;
+            }
+            var full = FullPose(player, s, crouch, s.Move == 1 || s.FadeCut, s.Body > 0f ? Footing : Crouch, s.Body);
             var fullHips = s.Hips.localPosition;
             FollowBlade(player, s);
             float eased = s.Weight * s.Weight * (3f - 2f * s.Weight); // starts and ends gently
-            if (!bladeOut)
+            // (a full-body cut fading out holds the blade out of its scabbard, though no move runs)
+            if (!bladeOut && !s.FadeCut)
             {
                 // the blade's place in the full stance (or the crouch), kept for the scabbard
                 var root = player.transform.rotation;
@@ -894,9 +1007,15 @@ namespace Iaido_Katana
                 // the game's idle, walk and run hunch the upper body forward, and the arms were made on the spine at rest:
                 // the stance holds it that way by SpineHold, so the hands land where they were made to
                 float hold = Mathf.Clamp01(Plugin.StanceSpineHold.Value);
+                var chestBefore = b[Spine2].rotation;
                 b[SpineLow].localRotation = QMath.Nlerp(b[SpineLow].localRotation, RestSpine, hold);
                 b[Spine1].localRotation = QMath.Nlerp(b[Spine1].localRotation, RestSpine1, hold);
                 b[Spine2].localRotation = QMath.Nlerp(b[Spine2].localRotation, RestSpine2, hold);
+                // the walk and run turn the neck against the chest's sway to keep the head steady. the hold took the sway
+                // away, so the neck gets back the turn the hold took from the chest, or the head would sway alone (55
+                // degrees running, the game's own run 4, measured in Unity on the game's avatar)
+                var taken = QMath.Mul(b[Spine2].rotation, QMath.Conj(chestBefore));
+                b[Neck].rotation = QMath.Mul(QMath.Conj(taken), b[Neck].rotation);
             }
             if (body > 0f)
             {
@@ -935,7 +1054,7 @@ namespace Iaido_Katana
             var right = ArmOf(b[RArm], b[RFore], b[RHand]);
             var left = ArmOf(b[LArm], b[LFore], b[LHand]);
             var origin = s.Hips.position - QMath.Rotate(root, StanceSolver.RestHips);
-            s.Elbows.MaxTurn = ElbowTurnSpeed * Time.deltaTime;
+            s.Elbows.MaxTurn = (s.Move == 1 && Moves.HasFullBody(s.MoveStep) ? FullElbowTurnSpeed : ElbowTurnSpeed) * Time.deltaTime;
             StanceSolver.Solve(origin, root, Settings, ref right, ref left, s.Attach.localPosition, s.Attach.localRotation, b[RHand].lossyScale.x, s.Elbows);
             b[RArm].rotation = right.Upper;
             b[RFore].rotation = right.Lower;

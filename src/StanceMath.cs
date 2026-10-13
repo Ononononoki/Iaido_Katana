@@ -162,6 +162,7 @@ namespace Iaido_Katana
         internal Vector3 LeftElbow = new Vector3(-0.8f, 1.19f, -0.12f);
         internal float RightNatural = 0.8f; // 1: the elbows point wherever the arm is most natural, less: pulled toward these poles
         internal float LeftNatural = 0.8f;
+        internal float RightWristLimit = 40f; // how far the right wrist bends before the arm solver turns the elbow instead (a move may allow more)
         internal Quaternion? Attach;          // set by the moves: the blade's turn in the player's frame, in place of yaw, pitch and roll
         internal Quaternion? SheathAt;        // where the scabbard really hangs (the blade's turn and SheathGrip), when the game knows it.
         internal Vector3 SheathGrip;          // the sheathing slides the blade into it, not into the stance's own aim
@@ -342,12 +343,12 @@ namespace Iaido_Katana
 
         // how strained a wrist is: a little inside the comfortable ranges, steeply more outside them. a two-handed sword grip
         // bends the wrists far toward the little finger (kendo's wringing grip), so that side goes to 38 degrees
-        internal static float Strain(float flex, float thumb, float roll)
+        internal static float Strain(float flex, float thumb, float roll, float flexLimit = 40f)
         {
             float Over(float v, float low, float high) => Math.Max(0f, Math.Max(low - v, v - high));
             float Sq(float x) => x * x;
             return Sq(flex / 45f) + Sq(thumb / 25f) + 0.5f * Sq(roll / 90f)
-                   + 4f * (Sq(Over(flex, -40f, 40f) / 10f) + Sq(Over(thumb, -38f, 15f) / 10f) + Sq(Over(roll, -90f, 90f) / 10f));
+                   + 4f * (Sq(Over(flex, -flexLimit, flexLimit) / 10f) + Sq(Over(thumb, -38f, 15f) / 10f) + Sq(Over(roll, -90f, 90f) / 10f));
         }
 
         private const float PolePull = 2f; // how strongly the stance's pole holds the elbow, at natural 0
@@ -423,7 +424,7 @@ namespace Iaido_Katana
         // forearm (zero: the hand stays as hand)
         // keepFrom to keepTo: a line the forearm stays 8 cm away from (the left arm from the blade), none when equal
         internal static Vector3 Swivel(Arm arm, Vector3 target, Quaternion hand, Vector3 pole, ArmRig rig, float natural, Torso body,
-            Vector3 holding = default, Vector3 keepFrom = default, Vector3 keepTo = default)
+            Vector3 holding = default, Vector3 keepFrom = default, Vector3 keepTo = default, float flexLimit = 40f)
         {
             float upper = QMath.Length(arm.Elbow - arm.Shoulder);
             float lower = QMath.Length(arm.Wrist - arm.Elbow);
@@ -455,7 +456,7 @@ namespace Iaido_Katana
                         float near = Math.Max(0f, 1f - Distance(elbow + (wrist - elbow) * u, keepFrom, keepTo) / 0.08f);
                         inside += near * near;
                     }
-                return Strain(flex, thumb, roll) + pull * (1f - QMath.Dot(bend, poleBend)) + 20f * inside;
+                return Strain(flex, thumb, roll, flexLimit) + pull * (1f - QMath.Dot(bend, poleBend)) + 20f * inside;
             }
 
             // all round in 15 degree steps, then finer round the best
@@ -556,7 +557,7 @@ namespace Iaido_Katana
             var fist = attachPos * handScale;
             var wrist = grip - QMath.Rotate(hand, fist);
             var rightPole = rootPos + QMath.Rotate(rootRot, s.RightElbow);
-            var rightBend = Swivel(right, wrist, hand, rightPole, RightRig, s.RightNatural, body);
+            var rightBend = Swivel(right, wrist, hand, rightPole, RightRig, s.RightNatural, body, flexLimit: s.RightWristLimit);
             if (memory != null) rightBend = Limit(rightBend, QMath.Norm(wrist - right.Shoulder), rootRot, memory, ref memory.Right);
             Reach(ref right, wrist, right.Shoulder + rightBend, hand, RightRig);
 
@@ -983,6 +984,33 @@ namespace Iaido_Katana
             new Key { Time = NotoBase, Sheath = true },
         };
 
+        // the same after a cut that ends low with both hands (the overhead, the heavies): first both hands lift in front,
+        // the blade turning up and the right hand rolling halfway, so the pommel never swings down through the right
+        // thigh (forward and high in the lunge the body is still rising out of) and the arm is not stretched (tuned
+        // 12 Oct, cost 0.22)
+        private static readonly Key[] NotoFromLow = WithFirst(Noto,
+            new Key { Time = 0.05f, Grip = new Vector3(0.097f, 1.32f, 0.523f), Yaw = 55.4f, Pitch = -60f, Roll = 108.3f, Left = 1f, Along = TwoHands, Twist = 8f, Lean = 18f });
+
+        // the same after the heavies (13 Oct), which end with the edge straight down and the right hand rolled the draw's
+        // way: both hands lift the blade up in front of the face, the hand keeping its roll (tuned on the heavy's end
+        // body, cost 0.22). the overhead's lift would roll the hand over, and no lift swept the handle through the thighs
+        private static readonly Key[] NotoFromHeavy = WithFirst(Noto,
+            new Key { Time = 0.05f, Grip = new Vector3(0.12f, 1.3f, 0.51f), Yaw = 45f, Pitch = -73.5f, Roll = 184.9f, Left = 1f, Along = TwoHands, Twist = 8f, Lean = 18f });
+
+        private const float NotoLowGrip = 1.3f; // a start below this with both hands on the handle lifts first
+
+        // the edge (the attach frame's +x) points nearly straight down: the heavies' finish, where the right hand is
+        // rolled the draw's way. the overhead's finish turns the edge about 50 degrees to the side
+        private static bool EdgeDown(Pose pose) => QMath.Rotate(pose.Rot, new Vector3(1f, 0f, 0f)).y < -0.9f;
+
+        private static Key[] WithFirst(Key[] keys, Key first)
+        {
+            var all = new Key[keys.Length + 1];
+            all[0] = first;
+            System.Array.Copy(keys, 0, all, 1, keys.Length);
+            return all;
+        }
+
         internal static int Steps => 3;
 
         // the katana's own cuts over the game's swings. off in 0.1.x (they clipped and froze the legs while walking,
@@ -994,8 +1022,31 @@ namespace Iaido_Katana
         private static readonly float[] CutFrom = { 0.48f, 0.42f, 0.56f, 1.2f };
         private static readonly float[] CutTo = { 0.74f, 0.62f, 0.76f, 1.38f };
 
+        // a full-body cut's trail, per cut (the combo's three, the heavy): from its top through the strike and the
+        // follow-through, clip seconds
+        private static readonly float[] FullCutFrom = { 0.29f, 0.236f, 0.3f, 0.62f, 0.62f };
+        private static readonly float[] FullCutTo = { 0.75f, 0.62f, 0.75f, 1.45f, 1.45f };
+        private static int Slot(int step) => step == HeavyStep ? 3 : step;
+
+        // the steel heavy with the blade already out (Swing.CustomAnimations): its own clip on the game's greatsword_secondary
+        // state ("Greatsword Secondary Attack", the hit at 0.959), so the hand never snaps back to the scabbard first
+        internal const int HeavyOutStep = 4;
+        internal const float HeavyOutHit = 1.296f; // on the sheathed heavy's clock (its clip carries the sledge's events)
+
+        // the clip time of a cut's hit, and where its strike begins (the warp's fast second half): its whoosh plays there
+        internal static float HitOf(int step) => step == HeavyStep ? HeavyHit : step == HeavyOutStep ? HeavyOutHit : HitTimes[Mathf.Clamp(step, 0, HitTimes.Length - 1)];
+        internal static float FullStrikeAt(int step) => HitOf(step) * 0.5f;
+
+        // a full-body cut's trail window, also for the katana's own clips of it (Swing.CustomAnimations)
+        internal static bool InFullCut(int step, float clipTime)
+        {
+            int i = Slot(step);
+            return i >= 0 && i < FullCutFrom.Length && clipTime >= FullCutFrom[i] && clipTime < FullCutTo[i];
+        }
+
         internal static bool InCut(int step, float clipTime)
         {
+            if (HasFullBody(step)) return InFullCut(step, clipTime);
             int i = step == HeavyStep ? 3 : step;
             return i >= 0 && i < CutFrom.Length && clipTime >= CutFrom[i] && clipTime < CutTo[i];
         }
@@ -1005,6 +1056,18 @@ namespace Iaido_Katana
         // sledge's overhead clip the heavy attack borrows (its hit at 1.296 s)
         internal const int HeavyStep = 3;
         internal const float HeavyHit = 1.296f;
+        // the right elbow pulled out from the body over these clip seconds, in a slow part: the sheathed heavy while the
+        // left hand joins the handle on the way up (13 Oct, the user's test of candidate 4: rising into jodan the elbow
+        // still sat in front of the chest and flicked out at the charge), the diagonal at the start of its windup. the
+        // heavy with the blade out starts in jodan with the elbow out
+        private const float HeavyOutFrom = 0.3f, HeavyOutTo = 0.38f, DiagonalOutFrom = 0f, DiagonalOutTo = 0.12f;
+        private static readonly Vector3 ElbowOutPole = new Vector3(0.6f, 0.85f, 0.25f); // out to the right and low, from the hips
+        private const float ElbowOutNatural = 0.3f, ElbowOutWristLimit = 80f;
+
+        private static float ElbowOutWeight(int step, float clipTime) =>
+            step == HeavyOutStep ? 1f
+            : step == HeavyStep ? Mathf.Clamp01((clipTime - HeavyOutFrom) / (HeavyOutTo - HeavyOutFrom))
+            : step == 2 ? Mathf.Clamp01((clipTime - DiagonalOutFrom) / (DiagonalOutTo - DiagonalOutFrom)) : 0f;
         private const float StepFrom = 1.15f, StepIn = 1.3f, StepHold = 1.45f, StepOut = 1.65f;
 
         private static readonly Key[] DrawUp =
@@ -1055,9 +1118,302 @@ namespace Iaido_Katana
             RightKnee = new Vector3(0.15f, 0.5f, 1f), LeftKnee = new Vector3(-0.2f, 0.5f, 0.8f),
         };
 
-        // the footing at clipTime of a cut: the kamae, with the heavy attack's step into its cut
-        internal static void Footing(int step, float clipTime, CrouchSettings into) =>
+        // the footing at clipTime of a cut: the kamae, with the heavy attack's step into its cut. a full-body cut has its
+        // own feet and hips on its body keys
+        internal static void Footing(int step, float clipTime, CrouchSettings into)
+        {
+            if (HasFullBody(step))
+            {
+                SampleBody(FullBodyOf(step), clipTime, BodyNow);
+                WriteFooting(BodyNow, into);
+                return;
+            }
             CrouchSettings.Lerp(Kamae, Lunge, step == HeavyStep ? HeavyStepWeight(clipTime) : 0f, into);
+        }
+
+        // the full-body cuts (Swing.CustomAnimations, 12 Oct): the cut owns the whole body on the base layer, over the game's
+        // greatsword swing, so that swing's trail and whoosh events, its hit stop and its network sync all stay. the
+        // arms and the blade run on their keys, the hips, chest, head and feet on body keys of their own, so the hips can
+        // lead the chest and the chest the arms (the kinetic chain). keyed for range and weight, not for comfort
+        internal static bool FullBody;
+
+        // whether the katana's own pose plays this combo step: every step with the upper body swings, with the full-body
+        // cuts only the steps that have full-body keys (the others stay the game's greatsword swings)
+        internal static bool Owns(int step) => OwnCuts && (!FullBody || HasFullBody(step));
+
+        internal static bool HasFullBody(int step) => FullBody && step >= 0 && step <= HeavyOutStep; // the combo, the heavy, the heavy with the blade out
+
+        private struct BodyKey
+        {
+            internal float Time;
+            internal float Hip, Twist, Lean, Head; // the hips' turn, the chest's twist and lean on top of it, the head this far below level
+            internal float Drop, Back, Pitch;      // the hips down, back (negative: forward over the front foot), the pelvis tipped forward
+            internal Vector3 Right, Left;          // the feet in the player's frame (y lifts a foot off the ground)
+            internal float RightTurn, LeftTurn;
+        }
+
+        // 2, full body: kiri oroshi. the blade swings up wide on the right into a high jodan, drops further back for a
+        // moment (cocked), then comes straight down the middle with the edge leading, through the hit at chest height and
+        // on past it until the tip is low in front, held there (zanshin). the right foot lifts as the blade reaches the
+        // top and stamps forward with the cut (fumikomi), the back foot is dragged up after (okuri ashi). the hips start
+        // forward and down while the arms are still cocked, the chest follows late and bends deep past the hit (the
+        // anime finish), the head goes down last. keyed in the greatsword clip's time: the warp plays 0 to 0.246 as the
+        // slow windup (about 0.41 s) and 0.246 to the hit at 0.492 as the strike (about 0.08 s, FullBodyStrikeBoost 1).
+        // like a kendo strike the hips peak early (about 55% of the way to the hit), the sword reaches its top last
+        // (12 Oct night: each key designed as a cut in one plane, then StancePreview tune on this cut's own body moved the
+        // grip a little and turned the edge up to 45 degrees off leading, never the blade's direction, so the wrists stay
+        // in their limits. on this rig the strike settles left of the middle with the blade 10 degrees right, like the
+        // old overhead cut, a straight middle line bends the wrists 55 to 65 degrees)
+        private static readonly Key[] FullOverhead =
+        {
+            // from the draw cut's end the right hand rolls through neutral before the left hand joins (the draw ends palm
+            // down, the overhead holds the other way, a direct turn bent the wrist to -71)
+            new Key { Time = 0.035f, Grip = new Vector3(0.55f, 1.05f, 0.022f), Yaw = 40f, Pitch = -28.6f, Roll = -152.1f },
+            Two(0.07f, new Vector3(0.24f, 1.3f, 0.32f), 54.8f, -45.2f, 107.5f),      // swung up on the right
+            Two(0.14f, new Vector3(0.237f, 1.74f, 0.32f), 167.5f, -55f, -13.2f),     // the tip over the right shoulder
+            Two(0.19f, new Vector3(-0.01f, 1.995f, 0.142f), 169.3f, -8f, -32.7f),    // jodan, high
+            Two(0.235f, new Vector3(-0.02f, 2.019f, 0.025f), 170.5f, 10f, -42f),     // cocked: the tip dropped behind the back
+            Two(0.34f, new Vector3(-0.04f, 1.9f, 0.44f), 163.9f, -71.9f, -38.3f),    // coming over the top
+            // from here the hands stay near the middle in front, like a real two-handed cut (12 Oct, the user: far left
+            // the right arm crossed the belly; tuned again with GripX -0.08 to 0.04)
+            Two(0.385f, new Vector3(0.04f, 1.51f, 0.65f), 24f, -82f, 116.1f),        // the blade up ahead, the wrists snapping over
+            Two(0.43f, new Vector3(-0.08f, 1.36f, 0.4f), 18f, -42f, 85.8f),          // down in front
+            Two(0.492f, new Vector3(-0.08f, 1.08f, 0.428f), 18f, -6f, 122.3f),       // the hit, level at the chest
+            Two(0.57f, new Vector3(-0.08f, 0.98f, 0.44f), 14.3f, 16f, 133.2f),       // on through, the tip low, the arms out in front
+            Two(0.66f, new Vector3(-0.08f, 1.04f, 0.44f), 18f, 11f, 119.5f),         // a small recoil up
+            Two(0.95f, new Vector3(-0.08f, 1.08f, 0.44f), 18f, -2f, 129.5f),         // risen into zanshin, the tip just below level
+        };
+
+        private static Key Two(float time, Vector3 grip, float yaw, float pitch, float roll) =>
+            new Key { Time = time, Grip = grip, Yaw = yaw, Pitch = pitch, Roll = roll, Left = 1f, Along = TwoHands };
+
+        private static readonly BodyKey[] FullOverheadBody =
+        {
+            // (12 Oct: starts where the draw cut ends, its lunge and turn. the right foot pulls back lifted while the blade
+            // goes up, then stamps forward again with the cut)
+            new BodyKey { Time = 0f, Drop = 0.18f, Back = -0.12f, Pitch = 12f, Hip = 34f, Twist = 22f, Lean = 33f, Head = 15f, Right = new Vector3(0.26f, 0f, 0.58f), Left = new Vector3(-0.15f, 0f, -0.2f), RightTurn = 22f, LeftTurn = -38f },
+            new BodyKey { Time = 0.1f, Drop = 0.08f, Back = 0.02f, Pitch = 0f, Hip = 12f, Twist = 6f, Lean = -2f, Head = -5f, Right = new Vector3(0.17f, 0.05f, 0.36f), Left = new Vector3(-0.14f, 0f, -0.22f), RightTurn = 8f, LeftTurn = -28f },
+            new BodyKey { Time = 0.16f, Drop = 0.07f, Back = 0f, Pitch = 0f, Hip = 4f, Twist = 4f, Lean = -8f, Head = -4f, Right = new Vector3(0.13f, 0.03f, 0.24f), Left = new Vector3(-0.13f, 0f, -0.22f), RightTurn = 3f, LeftTurn = -26f },
+            new BodyKey { Time = 0.22f, Drop = 0.09f, Back = -0.07f, Pitch = 5f, Hip = 0f, Twist = 2f, Lean = -10f, Head = -2f, Right = new Vector3(0.13f, 0.08f, 0.4f), Left = new Vector3(-0.13f, 0f, -0.25f), RightTurn = 2f, LeftTurn = -28f },
+            new BodyKey { Time = 0.3f, Drop = 0.12f, Back = -0.11f, Pitch = 9f, Hip = -3f, Twist = 0f, Lean = 4f, Head = 0f, Right = new Vector3(0.13f, 0.05f, 0.52f), Left = new Vector3(-0.13f, 0f, -0.27f), RightTurn = 0f, LeftTurn = -30f },
+            new BodyKey { Time = 0.492f, Drop = 0.17f, Back = -0.16f, Pitch = 12f, Hip = -6f, Twist = -2f, Lean = 24f, Head = 5f, Right = new Vector3(0.13f, 0f, 0.6f), Left = new Vector3(-0.14f, 0f, -0.28f), RightTurn = 0f, LeftTurn = -30f },
+            new BodyKey { Time = 0.58f, Drop = 0.22f, Back = -0.18f, Pitch = 14f, Hip = -6f, Twist = -2f, Lean = 34f, Head = 14f, Right = new Vector3(0.13f, 0f, 0.6f), Left = new Vector3(-0.14f, 0f, -0.28f), RightTurn = 0f, LeftTurn = -30f },
+            new BodyKey { Time = 0.8f, Drop = 0.2f, Back = -0.17f, Pitch = 12f, Hip = -6f, Twist = -2f, Lean = 30f, Head = 12f, Right = new Vector3(0.13f, 0f, 0.6f), Left = new Vector3(-0.14f, 0f, -0.16f), RightTurn = 0f, LeftTurn = -28f },
+            new BodyKey { Time = 0.95f, Drop = 0.13f, Back = -0.13f, Pitch = 8f, Hip = -5f, Twist = -2f, Lean = 18f, Head = 6f, Right = new Vector3(0.13f, 0f, 0.6f), Left = new Vector3(-0.14f, 0f, -0.16f), RightTurn = 0f, LeftTurn = -28f },
+        };
+
+        private static BodyKey[] FullBodyOf(int step) => step == 0 ? FullDrawBody : step == 2 ? FullRisingBody : step == HeavyStep ? FullHeavyBody
+            : step == HeavyOutStep ? FullHeavyOutBody : FullOverheadBody;
+
+        private static Key[] FullArmsOf(int step) => step == 0 ? FullDraw : step == 2 ? FullRising : step == HeavyStep ? FullHeavy
+            : step == HeavyOutStep ? FullHeavyOut : FullOverhead;
+
+        // the steel heavy, full body: nuki uchi. drawn up out of the scabbard into a high jodan, the blade cocked behind
+        // the back and held while the body sinks and the back foot widens (the charge, the heavy's warp plays 0 to 0.648
+        // in about 1.2 s), then the hips drive and a huge cut straight down with a long stamping lunge (about 0.1 s), on
+        // through the hit at the chest until the tip is just above the ground, the chest bent deep and the head down.
+        // keyed in "Sledge-Attack1"'s time (the hit at 1.296, the clip 1.667 s)
+        private static readonly Key[] FullHeavy =
+        {
+            new Key { Time = 0.08f, Sheath = true, Out = 0f },
+            new Key { Time = 0.18f, Sheath = true, Out = 0.12f },
+            new Key { Time = 0.24f, Sheath = true, Out = 0.35f },
+            new Key { Time = 0.3f, Grip = new Vector3(0.37f, 1.213f, 0.441f), Yaw = -55.8f, Pitch = -55.9f, Roll = -88.7f },
+            // (13 Oct, the user: the blade turned sideways in the slash. from here on the edge leads the cut, the right
+            // hand rolled the draw's way (the old roll turned the edge 70 to 110 degrees off), the cut 4 to 8 degrees
+            // right of straight ahead, the hands near the middle, tuned with tune_keys.py hk3 to hk5)
+            // (both hands on the handle by 0.38 and the right elbow out on the way up, tune_keys.py eo_h_two2, eo_h_jodan)
+            Two(0.38f, new Vector3(-0.1f, 1.745f, 0.308f), 187.2f, -45.8f, -63.8f),
+            Two(0.45f, new Vector3(0.076f, 2.061f, 0.041f), 160.2f, -9.3f, -13.1f),    // jodan
+            // (13 Oct, the user's tests: the right forearm pressed into the chest through the slash, then with the
+            // hands out in front the right elbow folded in across the chest. from the charge on the right elbow points
+            // out and down to the right (Moves.ElbowOutWeight), the hands out in front, the elbows bent about 50, the
+            // chest a little more upright from the hit on, tuned with tune_keys.py eo_h_*)
+            Two(0.6f, new Vector3(0.089f, 2.066f, -0.088f), 156.7f, 7f, 1.9f),         // cocked, charging
+            Two(0.645f, new Vector3(0.089f, 2.059f, -0.086f), 157.2f, 9f, 1.9f),
+            Two(0.896f, new Vector3(-0.04f, 1.771f, 0.556f), 160.1f, -62.9f, -3.8f),   // over the top
+            Two(1.014f, new Vector3(-0.109f, 1.467f, 0.655f), 0f, -83.3f, 162f),       // the blade up ahead
+            Two(1.133f, new Vector3(-0.126f, 1.26f, 0.608f), -1f, -61.6f, 176f),
+            Two(1.296f, new Vector3(-0.112f, 1.052f, 0.453f), 7.8f, -34.4f, 180f),     // the hit at the chest
+            // the hands low out in front, the tip a little up, the elbows bent (a straight arm let the elbow swing round)
+            Two(1.4f, new Vector3(-0.098f, 1.005f, 0.441f), 11.6f, -26.5f, 165f),
+            Two(1.667f, new Vector3(-0.102f, 1.014f, 0.434f), 10.5f, -27.1f, 160f),
+        };
+
+        private static readonly BodyKey[] FullHeavyBody =
+        {
+            new BodyKey { Time = 0f, Drop = 0.04f, Pitch = 3f, Twist = -33f, Lean = 8f, Right = new Vector3(0.13f, 0f, 0.14f), Left = new Vector3(-0.13f, 0f, -0.22f), RightTurn = 5f, LeftTurn = -25f },
+            new BodyKey { Time = 0.2f, Drop = 0.06f, Pitch = 2f, Hip = -8f, Twist = -20f, Lean = 4f, Head = -4f, Right = new Vector3(0.13f, 0f, 0.14f), Left = new Vector3(-0.13f, 0f, -0.24f), RightTurn = 5f, LeftTurn = -26f },
+            new BodyKey { Time = 0.45f, Drop = 0.08f, Back = 0.05f, Pitch = 0f, Hip = 6f, Twist = 4f, Lean = -10f, Head = -6f, Right = new Vector3(0.13f, 0f, 0.12f), Left = new Vector3(-0.15f, 0f, -0.3f), RightTurn = 4f, LeftTurn = -30f },
+            new BodyKey { Time = 0.62f, Drop = 0.12f, Back = 0.06f, Pitch = 2f, Hip = 4f, Twist = 3f, Lean = -12f, Head = -4f, Right = new Vector3(0.13f, 0.03f, 0.14f), Left = new Vector3(-0.15f, 0f, -0.3f), RightTurn = 3f, LeftTurn = -30f },
+            new BodyKey { Time = 0.75f, Drop = 0.13f, Back = -0.04f, Pitch = 6f, Hip = 0f, Twist = 2f, Lean = -10f, Head = -2f, Right = new Vector3(0.14f, 0.09f, 0.4f), Left = new Vector3(-0.15f, 0f, -0.3f), RightTurn = 2f, LeftTurn = -30f },
+            new BodyKey { Time = 1f, Drop = 0.2f, Back = -0.18f, Pitch = 12f, Hip = -4f, Twist = 0f, Lean = 10f, Head = 2f, Right = new Vector3(0.15f, 0.05f, 0.75f), Left = new Vector3(-0.15f, 0f, -0.3f), RightTurn = 0f, LeftTurn = -32f },
+            // (13 Oct: the chest leans 16 to 22 degrees less from the hit on. bent 46 to 60 degrees with the pelvis, the
+            // arms had no room in front of it: the right forearm pressed into the chest, or the elbow swung out to the
+            // side with the wrist bent -55)
+            new BodyKey { Time = 1.296f, Drop = 0.28f, Back = -0.28f, Pitch = 16f, Hip = -6f, Twist = -2f, Lean = 14f, Head = 14f, Right = new Vector3(0.16f, 0f, 0.85f), Left = new Vector3(-0.15f, 0f, -0.3f), RightTurn = 0f, LeftTurn = -34f },
+            new BodyKey { Time = 1.4f, Drop = 0.32f, Back = -0.3f, Pitch = 18f, Hip = -6f, Twist = -2f, Lean = 20f, Head = 28f, Right = new Vector3(0.16f, 0f, 0.85f), Left = new Vector3(-0.15f, 0f, -0.3f), RightTurn = 0f, LeftTurn = -34f },
+            new BodyKey { Time = 1.667f, Drop = 0.3f, Back = -0.28f, Pitch = 17f, Hip = -6f, Twist = -2f, Lean = 18f, Head = 25f, Right = new Vector3(0.16f, 0f, 0.85f), Left = new Vector3(-0.15f, 0f, -0.3f), RightTurn = 0f, LeftTurn = -34f },
+        };
+
+        // the same heavy with the blade already out: it starts in jodan (the game blends any cut's end into it), sinks
+        // and cocks the blade behind the head through the whole charge, and cuts like the sheathed heavy. it runs on the
+        // sheathed heavy's clock (its clip carries "Sledge-Attack1"'s events, the hit at 1.296), so the warp gives both
+        // heavies the same charge, the same slash (about 95 ms) and the same recovery. our clip is 1.85 s on the
+        // greatsword's secondary state, which leaves at the clip's end (about 0.65 s after the hit)
+        private static readonly Key[] FullHeavyOut =
+        {
+            Two(0f, new Vector3(0.076f, 2.061f, 0.041f), 160.2f, -9.3f, -13.1f),      // jodan, the right elbow out
+            Two(0.6f, new Vector3(0.089f, 2.066f, -0.088f), 156.7f, 7f, 1.9f),        // cocked, charging
+            Two(0.645f, new Vector3(0.089f, 2.059f, -0.086f), 157.2f, 9f, 1.9f),
+            Two(0.896f, new Vector3(-0.04f, 1.771f, 0.556f), 160.1f, -62.9f, -3.8f),  // over the top
+            Two(1.014f, new Vector3(-0.109f, 1.467f, 0.655f), 0f, -83.3f, 162f),      // the same strike as the sheathed heavy
+            Two(1.133f, new Vector3(-0.126f, 1.26f, 0.608f), -1f, -61.6f, 176f),
+            Two(1.296f, new Vector3(-0.112f, 1.052f, 0.453f), 7.8f, -34.4f, 180f),    // the hit at the chest
+            Two(1.4f, new Vector3(-0.098f, 1.005f, 0.441f), 11.6f, -26.5f, 165f),
+            Two(1.85f, new Vector3(-0.102f, 1.014f, 0.434f), 10.5f, -27.1f, 160f),
+        };
+
+        private static readonly BodyKey[] FullHeavyOutBody =
+        {
+            new BodyKey { Time = 0f, Drop = 0.08f, Back = 0.05f, Pitch = 0f, Hip = 6f, Twist = 4f, Lean = -10f, Head = -6f, Right = new Vector3(0.13f, 0f, 0.12f), Left = new Vector3(-0.15f, 0f, -0.3f), RightTurn = 4f, LeftTurn = -30f },
+            new BodyKey { Time = 0.62f, Drop = 0.12f, Back = 0.06f, Pitch = 2f, Hip = 4f, Twist = 3f, Lean = -12f, Head = -4f, Right = new Vector3(0.13f, 0.03f, 0.14f), Left = new Vector3(-0.15f, 0f, -0.3f), RightTurn = 3f, LeftTurn = -30f },
+            new BodyKey { Time = 0.75f, Drop = 0.13f, Back = -0.04f, Pitch = 6f, Hip = 0f, Twist = 2f, Lean = -10f, Head = -2f, Right = new Vector3(0.14f, 0.09f, 0.4f), Left = new Vector3(-0.15f, 0f, -0.3f), RightTurn = 2f, LeftTurn = -30f },
+            new BodyKey { Time = 1f, Drop = 0.2f, Back = -0.18f, Pitch = 12f, Hip = -4f, Twist = 0f, Lean = 10f, Head = 2f, Right = new Vector3(0.15f, 0.05f, 0.75f), Left = new Vector3(-0.15f, 0f, -0.3f), RightTurn = 0f, LeftTurn = -32f },
+            new BodyKey { Time = 1.296f, Drop = 0.28f, Back = -0.28f, Pitch = 16f, Hip = -6f, Twist = -2f, Lean = 14f, Head = 14f, Right = new Vector3(0.16f, 0f, 0.85f), Left = new Vector3(-0.15f, 0f, -0.3f), RightTurn = 0f, LeftTurn = -34f },
+            new BodyKey { Time = 1.4f, Drop = 0.32f, Back = -0.3f, Pitch = 18f, Hip = -6f, Twist = -2f, Lean = 20f, Head = 28f, Right = new Vector3(0.16f, 0f, 0.85f), Left = new Vector3(-0.15f, 0f, -0.3f), RightTurn = 0f, LeftTurn = -34f },
+            new BodyKey { Time = 1.85f, Drop = 0.3f, Back = -0.28f, Pitch = 17f, Hip = -6f, Twist = -2f, Lean = 18f, Head = 25f, Right = new Vector3(0.16f, 0f, 0.85f), Left = new Vector3(-0.15f, 0f, -0.3f), RightTurn = 0f, LeftTurn = -34f },
+        };
+
+        // 2, full body: kesa giri, a downward diagonal from the overhead cut's finish (13 Oct, the user: the old rising
+        // cut led with the back of the blade, the sword sits in the hand one way, so the third cut comes down). the blade
+        // rises on the right into hasso, its tip back over the right shoulder, while the hips and chest coil right and
+        // the front foot is drawn back (the windup, the warp plays 0 to 0.32 in about 0.53 s), then the hips drive left
+        // first and the blade cuts down across the front in one plane with the edge leading, level ahead at the hit, on
+        // to low on the left, the right foot stamping, and it settles in a low guard where the sheathing can begin. both
+        // hands. keyed in "Greatsword BaseAttack (3)"'s time (the hit at 0.639, the clip 1.5 s)
+        // todo (13 Oct, the user: keep the names for 0.2.0, rename later): FullRising, FullRisingBody and the clip
+        // "Iaido Rising" (ClipSwap, KatanaCheck, the Unity project's Cuts table) still carry the old rising cut's name
+        private static readonly Key[] FullRising =
+        {
+            // (designed as one cut plane tilted 28 degrees right of upright, the edge along the way the blade turns, then
+            // each key tuned with tune_keys.py. like the heavy the cut stops at its hit with a small drift after it:
+            // swept on to the left the edge could not lead, and with the tip low the wrists bend -45 to -55. the hands
+            // high and out to the right in hasso: nearer the head the right forearm crossed the top of the chest. the
+            // strike starts softly from hasso so its first frames, where the hand can not roll the edge ahead, stay slow.
+            // (13 Oct, the user's test of candidate 3: the right elbow folded in across the chest. now the right elbow
+            // points out to the right all through (Moves.ElbowOutWeight) in the overhead's hand roll family, so the
+            // hand no longer turns over in the windup, the wrist bending up to about 60, tune_keys.py eo_d_*)
+            Two(0.12f, new Vector3(0.205f, 1.364f, 0.483f), 81.5f, -64.5f, 103.6f),   // lifted on the right, the blade up
+            Two(0.18f, new Vector3(0.336f, 1.539f, 0.432f), 129.1f, -61f, 69.4f),
+            Two(0.24f, new Vector3(0.296f, 1.648f, 0.351f), 150.1f, -49.7f, 72.4f),   // hasso, the tip back over the right shoulder
+            Two(0.3195f, new Vector3(0.296f, 1.648f, 0.351f), 150.1f, -49.7f, 72.4f), // held in hasso to the strike
+            Two(0.38f, new Vector3(0.35f, 1.697f, 0.44f), 144f, -48f, 73f),
+            Two(0.43f, new Vector3(0.026f, 1.551f, 0.546f), 86.3f, -51f, 96.5f),      // over the top on the right
+            Two(0.53f, new Vector3(-0.12f, 1.155f, 0.512f), 31.5f, -40f, 135.7f),     // down across the front
+            Two(0.639f, new Vector3(-0.194f, 1.024f, 0.42f), 18f, -10f, 151.6f),      // the hit, level ahead
+            Two(0.75f, new Vector3(-0.25f, 1.042f, 0.42f), 12f, -9f, 167f),           // a little on to the left, the tip level
+            Two(0.833f, new Vector3(-0.13f, 1.053f, 0.42f), 4f, -11f, 171.3f),
+            Two(1.2f, new Vector3(-0.149f, 1.069f, 0.42f), 12f, -24f, 158.5f),        // settled in a guard, the tip a little up
+            Two(1.45f, new Vector3(-0.092f, 1.077f, 0.43f), 14f, -25f, 156.4f),
+        };
+
+        private static readonly BodyKey[] FullRisingBody =
+        {
+            // the overhead's finish, then coiled right with the front foot drawn back, the hips driving left first
+            // (their peak about 55% of the way to the hit), the right foot stamping with the cut, the chest and head
+            // following the blade down to the left
+            new BodyKey { Time = 0f, Drop = 0.13f, Back = -0.13f, Pitch = 8f, Hip = -5f, Twist = -2f, Lean = 18f, Head = 6f, Right = new Vector3(0.13f, 0f, 0.6f), Left = new Vector3(-0.14f, 0f, -0.16f), RightTurn = 0f, LeftTurn = -28f },
+            new BodyKey { Time = 0.15f, Drop = 0.08f, Back = -0.06f, Pitch = 4f, Hip = 12f, Twist = 14f, Lean = 4f, Head = 2f, Right = new Vector3(0.13f, 0.03f, 0.5f), Left = new Vector3(-0.14f, 0f, -0.2f), RightTurn = 5f, LeftTurn = -30f },
+            new BodyKey { Time = 0.3f, Drop = 0.1f, Back = -0.04f, Pitch = 5f, Hip = 24f, Twist = 20f, Lean = 2f, Head = 0f, Right = new Vector3(0.13f, 0.05f, 0.42f), Left = new Vector3(-0.14f, 0f, -0.22f), RightTurn = 8f, LeftTurn = -30f },
+            new BodyKey { Time = 0.48f, Drop = 0.15f, Back = -0.12f, Pitch = 9f, Hip = -8f, Twist = 8f, Lean = 12f, Head = 4f, Right = new Vector3(0.13f, 0f, 0.62f), Left = new Vector3(-0.14f, 0f, -0.24f), RightTurn = 0f, LeftTurn = -30f },
+            // (the chest leans less from the hit on, like the heavy: bent further the hands sat on the belly)
+            new BodyKey { Time = 0.639f, Drop = 0.18f, Back = -0.17f, Pitch = 12f, Hip = -22f, Twist = -10f, Lean = 14f, Head = 16f, Right = new Vector3(0.14f, 0f, 0.66f), Left = new Vector3(-0.15f, 0f, -0.26f), RightTurn = -5f, LeftTurn = -34f },
+            new BodyKey { Time = 0.75f, Drop = 0.2f, Back = -0.18f, Pitch = 13f, Hip = -28f, Twist = -18f, Lean = 18f, Head = 22f, Right = new Vector3(0.14f, 0f, 0.66f), Left = new Vector3(-0.15f, 0f, -0.26f), RightTurn = -5f, LeftTurn = -34f },
+            new BodyKey { Time = 0.833f, Drop = 0.2f, Back = -0.18f, Pitch = 13f, Hip = -30f, Twist = -20f, Lean = 18f, Head = 22f, Right = new Vector3(0.14f, 0f, 0.66f), Left = new Vector3(-0.15f, 0f, -0.26f), RightTurn = -5f, LeftTurn = -34f },
+            new BodyKey { Time = 1.2f, Drop = 0.15f, Back = -0.14f, Pitch = 9f, Hip = -14f, Twist = -8f, Lean = 11f, Head = 12f, Right = new Vector3(0.14f, 0f, 0.66f), Left = new Vector3(-0.15f, 0f, -0.22f), RightTurn = -3f, LeftTurn = -32f },
+            new BodyKey { Time = 1.45f, Drop = 0.13f, Back = -0.13f, Pitch = 8f, Hip = -10f, Twist = -5f, Lean = 10f, Head = 9f, Right = new Vector3(0.14f, 0f, 0.66f), Left = new Vector3(-0.15f, 0f, -0.2f), RightTurn = -3f, LeftTurn = -30f },
+        };
+
+        // 0, full body: nukitsuke from the stance. the body sinks and coils left while the right hand settles on the grip
+        // and the thumb pushes the guard out (a tense windup, the warp plays 0 to 0.302 in about 0.5 s), then the hips
+        // unwind first and the blade comes out along the scabbard, leaves it pointing ahead and sweeps across the front
+        // to the far right in about 0.1 s, the right foot stamping forward and out. it ends like the thunderclap: the
+        // blade fully to the side, the arm about level, the chest bent deep, the head low, the left hand still at the
+        // scabbard's mouth (saya biki). keyed in "Greatsword BaseAttack (1)"'s time (the hit at 0.604)
+        private static readonly Key[] FullDraw =
+        {
+            new Key { Time = 0.1f, Sheath = true, Out = 0f },
+            new Key { Time = 0.28f, Sheath = true, Out = 0.06f },  // the thumb pushes the guard out (koiguchi)
+            new Key { Time = 0.36f, Sheath = true, Out = 0.45f },  // the slide out along the curve
+            new Key { Time = 0.42f, Grip = new Vector3(0.45f, 1f, 0.388f), Yaw = -48.6f, Pitch = -12f, Roll = -129.5f },
+            // (tuned on the cut's own body with tune_keys.py, palm down: the wrists in their limits, the left arm holds
+            // the scabbard back at the hip while the chest turns right, as in saya biki)
+            new Key { Time = 0.5f, Grip = new Vector3(0.617f, 1.121f, 0.047f), Yaw = -9.9f, Pitch = 4.6f, Roll = -101.4f },
+            new Key { Time = 0.555f, Grip = new Vector3(0.576f, 1.258f, -0.3f), Yaw = 43.3f, Pitch = -10.5f, Roll = -81.8f },
+            new Key { Time = 0.604f, Grip = new Vector3(0.697f, 1.32f, -0.33f), Yaw = 76f, Pitch = -4f, Roll = -120.3f },
+            new Key { Time = 0.783f, Grip = new Vector3(0.465f, 1.096f, -0.365f), Yaw = 83f, Pitch = -2f, Roll = -119.4f },
+            new Key { Time = 1.1f, Grip = new Vector3(0.47f, 1.086f, -0.35f), Yaw = 81f, Pitch = -1f, Roll = -122.1f },
+        };
+
+        private static readonly BodyKey[] FullDrawBody =
+        {
+            new BodyKey { Time = 0f, Drop = 0.04f, Pitch = 3f, Twist = -33f, Lean = 8f, Right = new Vector3(0.13f, 0f, 0.14f), Left = new Vector3(-0.13f, 0f, -0.22f), RightTurn = 5f, LeftTurn = -25f },
+            new BodyKey { Time = 0.15f, Drop = 0.1f, Back = 0.02f, Pitch = 6f, Hip = -12f, Twist = -40f, Lean = 16f, Head = 4f, Right = new Vector3(0.14f, 0f, 0.16f), Left = new Vector3(-0.13f, 0f, -0.22f), RightTurn = 5f, LeftTurn = -28f },
+            new BodyKey { Time = 0.28f, Drop = 0.14f, Back = 0f, Pitch = 10f, Hip = -18f, Twist = -42f, Lean = 22f, Head = 8f, Right = new Vector3(0.16f, 0.05f, 0.28f), Left = new Vector3(-0.13f, 0f, -0.23f), RightTurn = 8f, LeftTurn = -30f },
+            new BodyKey { Time = 0.36f, Drop = 0.16f, Back = -0.06f, Pitch = 12f, Hip = 0f, Twist = -25f, Lean = 25f, Head = 10f, Right = new Vector3(0.2f, 0.04f, 0.45f), Left = new Vector3(-0.14f, 0f, -0.26f), RightTurn = 12f, LeftTurn = -33f },
+            new BodyKey { Time = 0.5f, Drop = 0.18f, Back = -0.12f, Pitch = 13f, Hip = 25f, Twist = 0f, Lean = 30f, Head = 14f, Right = new Vector3(0.24f, 0f, 0.55f), Left = new Vector3(-0.15f, 0f, -0.3f), RightTurn = 18f, LeftTurn = -38f },
+            new BodyKey { Time = 0.604f, Drop = 0.2f, Back = -0.14f, Pitch = 14f, Hip = 35f, Twist = 22f, Lean = 36f, Head = 18f, Right = new Vector3(0.26f, 0f, 0.58f), Left = new Vector3(-0.16f, 0f, -0.32f), RightTurn = 22f, LeftTurn = -40f },
+            new BodyKey { Time = 0.7f, Drop = 0.21f, Back = -0.15f, Pitch = 15f, Hip = 38f, Twist = 26f, Lean = 38f, Head = 20f, Right = new Vector3(0.26f, 0f, 0.58f), Left = new Vector3(-0.16f, 0f, -0.32f), RightTurn = 22f, LeftTurn = -40f },
+            new BodyKey { Time = 0.783f, Drop = 0.2f, Back = -0.14f, Pitch = 14f, Hip = 36f, Twist = 24f, Lean = 36f, Head = 18f, Right = new Vector3(0.26f, 0f, 0.58f), Left = new Vector3(-0.16f, 0f, -0.3f), RightTurn = 22f, LeftTurn = -40f },
+            new BodyKey { Time = 1.1f, Drop = 0.18f, Back = -0.12f, Pitch = 12f, Hip = 34f, Twist = 22f, Lean = 33f, Head = 15f, Right = new Vector3(0.26f, 0f, 0.58f), Left = new Vector3(-0.15f, 0f, -0.2f), RightTurn = 22f, LeftTurn = -38f },
+        };
+
+        // the body of a full-body cut, sampled into these values: hip turn, twist, lean, head, drop, back, pitch, the right
+        // foot, the left foot, their turns
+        private const int BodyValues = 15;
+        private static readonly float[] BodyNow = new float[BodyValues], BodyA = new float[BodyValues], BodyB = new float[BodyValues],
+            BodyC = new float[BodyValues], BodyD = new float[BodyValues];
+
+        private static void Values(BodyKey k, float[] v)
+        {
+            v[0] = k.Hip; v[1] = k.Twist; v[2] = k.Lean; v[3] = k.Head; v[4] = k.Drop; v[5] = k.Back; v[6] = k.Pitch;
+            v[7] = k.Right.x; v[8] = k.Right.y; v[9] = k.Right.z; v[10] = k.Left.x; v[11] = k.Left.y; v[12] = k.Left.z;
+            v[13] = k.RightTurn; v[14] = k.LeftTurn;
+        }
+
+        // the body t seconds into its keys: every value passes its keys with a speed (Spline), at rest at the ends
+        private static void SampleBody(BodyKey[] keys, float t, float[] into)
+        {
+            int i = 0;
+            while (i < keys.Length && t > keys[i].Time) i++;
+            if (i == 0 || i >= keys.Length)
+            {
+                Values(keys[i == 0 ? 0 : keys.Length - 1], into);
+                return;
+            }
+            bool before = i >= 2, after = i + 1 < keys.Length;
+            Values(keys[i - 1], BodyB);
+            Values(keys[i], BodyC);
+            Values(keys[before ? i - 2 : i - 1], BodyA);
+            Values(keys[after ? i + 1 : i], BodyD);
+            float t0 = before ? keys[i - 2].Time : float.NaN, t1 = keys[i - 1].Time, t2 = keys[i].Time, t3 = after ? keys[i + 1].Time : float.NaN;
+            for (int v = 0; v < BodyValues; v++) into[v] = Spline.Through(t0, t1, t2, t3, BodyA[v], BodyB[v], BodyC[v], BodyD[v], t);
+        }
+
+        private static void WriteFooting(float[] b, CrouchSettings into)
+        {
+            into.HipTurn = b[0];
+            into.HipDrop = b[4];
+            into.HipBack = b[5];
+            into.HipPitch = b[6];
+            into.RightFoot = new Vector3(b[7], b[8], b[9]);
+            into.LeftFoot = new Vector3(b[10], b[11], b[12]);
+            into.RightFootTurn = b[13];
+            into.LeftFootTurn = b[14];
+            into.RightKnee = Lunge.RightKnee; // the knees bend forward over the feet
+            into.LeftKnee = Lunge.LeftKnee;
+        }
 
         // how far into the step the heavy attack is at clipTime: in with the cut, held, and back before the clip ends
         internal static float HeavyStepWeight(float clipTime)
@@ -1073,6 +1429,28 @@ namespace Iaido_Katana
         // time it began
         internal static void Combo(int step, bool fromScabbard, float clipTime, float startClip, Pose from, StanceSettings stance, StanceSettings into)
         {
+            if (HasFullBody(step))
+            {
+                // the arms on their keys, the hips, chest and head on the body keys
+                var arms = FullArmsOf(step);
+                var pose = Sample(arms, clipTime, Mathf.Min(startClip, arms[0].Time - 0.05f), from, stance);
+                SampleBody(FullBodyOf(step), clipTime, BodyNow);
+                pose.Hip = BodyNow[0];
+                pose.Twist = BodyNow[1];
+                pose.Lean = BodyNow[2];
+                Write(pose, stance, into);
+                into.HeadDown = BodyNow[3];
+                // the right elbow points out from the body (13 Oct, the user's test: an elbow folded in across the chest
+                // can not be). with both hands low in front and the edge down, the arm solver's most comfortable pick
+                // folded the right arm across the chest in the heavies' and the diagonal's strike and finish. there the
+                // elbow is pulled out and down to the right, and the wrist may bend up to 80 degrees instead (the
+                // user's compromise). only these clips' baking sees it, the game plays the baked clips
+                float outWeight = ElbowOutWeight(step, clipTime);
+                into.RightNatural = Mathf.Lerp(stance.RightNatural, ElbowOutNatural, outWeight);
+                into.RightElbow = stance.RightElbow + (ElbowOutPole - stance.RightElbow) * outWeight;
+                into.RightWristLimit = Mathf.Lerp(stance.RightWristLimit, ElbowOutWristLimit, outWeight);
+                return;
+            }
             var keys = step == HeavyStep ? (fromScabbard ? DrawUp : from.Grip.x > 0.3f ? RaiseUpWide : RaiseUp) // the arm out right: swung round
                 : step == 0 ? (fromScabbard ? DrawCut : SideCut) : step == 1 ? OverheadCut : DiagonalCut;
             Write(Sample(keys, clipTime, Mathf.Min(startClip, keys[0].Time - 0.05f), from, stance), stance, into);
@@ -1083,7 +1461,9 @@ namespace Iaido_Katana
         internal static void Sheathe(float t, float hold, float length, Pose from, StanceSettings stance, StanceSettings into)
         {
             float k = t < hold ? 0f : (t - hold) * NotoBase / Mathf.Max(0.1f, length);
-            Write(Sample(Noto, k, 0f, from, stance), stance, into);
+            // both hands on the handle, low: lift first, the heavies' way when the edge points straight down
+            var keys = from.Left > 0.5f && from.Along < 0f && from.Grip.y < NotoLowGrip ? (EdgeDown(from) ? NotoFromHeavy : NotoFromLow) : Noto;
+            Write(Sample(keys, k, 0f, from, stance), stance, into);
         }
 
         // how far out of its scabbard the blade is t seconds into the sheathing, once it is laid along the scabbard and
@@ -1292,8 +1672,140 @@ namespace Iaido_Katana
             into.LeftHand = Mouth(stance);
             into.MouthAxis = MouthAxis(stance);
             into.HeadForward = stance.HeadForward;
+            into.HeadDown = 0f; // a full-body cut sets its own after this
             into.RightElbow = stance.RightElbow;
             into.LeftElbow = stance.LeftElbow;
+        }
+    }
+
+    // the feet of a full-body cut stay where they stand in the world. the cut's footing moves them (the stamp forward,
+    // the back foot dragged up), and that motion is added to where each foot stands. when the player keeps moving through
+    // the swing (the game keeps 30% of the speed), a foot that is left too far from where the footing wants it takes a
+    // quick lifted step there, one foot at a time. standing still the feet do exactly what the keys say
+    internal sealed class FootPlant
+    {
+        internal const float Drift = 0.1f;     // meters off its footing before a foot steps
+        internal const float MaxDrift = 0.2f;  // a standing foot further off than this slides along (the leg would stretch)
+        internal const float StepTime = 0.13f; // seconds a step takes
+        internal const float Lift = 0.07f;     // how high the stepping foot lifts at its middle
+        private const float Lead = 0.6f;       // a step lands this share of its own time ahead of the moving player
+
+        internal bool Has;
+        internal int Stepping = -1;           // 0 the left foot steps, 1 the right, -1 none
+        internal int Steps;                   // steps taken since the cut began
+        private Vector3 _left, _right;        // where each foot stands, world
+        private Vector3 _keyLeft, _keyRight;  // the footing last frame, the player's frame
+        private Vector3 _from;
+        private float _start;
+        private Vector3 _lastRoot, _velocity; // how fast the player moves on the ground, smoothed
+        private float _lastTime;
+
+        internal void Reset()
+        {
+            Has = false;
+            Stepping = -1;
+            Steps = 0;
+        }
+
+        // rootPos and rootRot are the player's place now, legs its footing at time (seconds). the feet are written back
+        // into legs, in the player's frame
+        internal void Step(Vector3 rootPos, Quaternion rootRot, CrouchSettings legs, float time)
+        {
+            var wantLeft = rootPos + QMath.Rotate(rootRot, Flat(legs.LeftFoot));
+            var wantRight = rootPos + QMath.Rotate(rootRot, Flat(legs.RightFoot));
+            if (!Has)
+            {
+                _left = wantLeft;
+                _right = wantRight;
+                _keyLeft = legs.LeftFoot;
+                _keyRight = legs.RightFoot;
+                Has = true;
+                Stepping = -1;
+                Steps = 0;
+                _lastRoot = rootPos;
+                _lastTime = time;
+                _velocity = Vector3.zero;
+            }
+            float dt = time - _lastTime;
+            if (dt > 1e-4f)
+            {
+                _velocity = Vector3.Lerp(_velocity, Flat(rootPos - _lastRoot) / dt, Mathf.Clamp01(dt / 0.08f));
+                _lastRoot = rootPos;
+                _lastTime = time;
+            }
+            // the footing's own motion since last frame moves the standing feet with it
+            _left += QMath.Rotate(rootRot, Flat(legs.LeftFoot - _keyLeft));
+            _right += QMath.Rotate(rootRot, Flat(legs.RightFoot - _keyRight));
+            _keyLeft = legs.LeftFoot;
+            _keyRight = legs.RightFoot;
+            // a step lands a little ahead when the player moves, so the next one is not due at once
+            var lead = _velocity * (StepTime * Lead);
+            wantLeft += lead;
+            wantRight += lead;
+            // a standing foot never falls further behind than MaxDrift: it slides instead of stretching the leg
+            if (Stepping != 0) _left = Within(_left, wantLeft, MaxDrift);
+            if (Stepping != 1) _right = Within(_right, wantRight, MaxDrift);
+
+            if (Stepping < 0)
+            {
+                float left = Across(_left - wantLeft), right = Across(_right - wantRight);
+                if (Mathf.Max(left, right) > Drift)
+                {
+                    Stepping = right >= left ? 1 : 0;
+                    _from = Stepping == 1 ? _right : _left;
+                    _start = time;
+                    Steps++;
+                }
+            }
+            // the feet stand on the player's ground height (like the game's own clips, slopes are not followed)
+            var shownLeft = _left;
+            var shownRight = _right;
+            float liftLeft = 0f, liftRight = 0f;
+            if (Stepping >= 0)
+            {
+                // the step lands where the footing wants the foot by then, lifted on the way
+                float u = Mathf.Clamp01((time - _start) / StepTime);
+                float eased = u * u * (3f - 2f * u);
+                var to = Stepping == 1 ? wantRight : wantLeft;
+                var at = _from + (to - _from) * eased;
+                float lift = Lift * 4f * u * (1f - u);
+                if (Stepping == 1)
+                {
+                    shownRight = at;
+                    liftRight = lift;
+                }
+                else
+                {
+                    shownLeft = at;
+                    liftLeft = lift;
+                }
+                if (u >= 1f)
+                {
+                    if (Stepping == 1) _right = to;
+                    else _left = to;
+                    Stepping = -1;
+                }
+            }
+            legs.LeftFoot = Local(rootPos, rootRot, shownLeft, legs.LeftFoot.y + liftLeft);
+            legs.RightFoot = Local(rootPos, rootRot, shownRight, legs.RightFoot.y + liftRight);
+        }
+
+        // a foot's place on the ground back in the player's frame, lifted by lift
+        private static Vector3 Local(Vector3 rootPos, Quaternion rootRot, Vector3 world, float lift)
+        {
+            var local = QMath.Rotate(QMath.Conj(rootRot), Flat(world - rootPos));
+            return new Vector3(local.x, lift, local.z);
+        }
+
+        private static Vector3 Flat(Vector3 v) => new Vector3(v.x, 0f, v.z);
+
+        private static float Across(Vector3 v) => Mathf.Sqrt(v.x * v.x + v.z * v.z);
+
+        // p moved toward want until it is at most max away on the ground
+        private static Vector3 Within(Vector3 p, Vector3 want, float max)
+        {
+            float d = Across(p - want);
+            return d <= max ? p : want + (p - want) * (max / d);
         }
     }
 }

@@ -104,10 +104,29 @@ namespace Iaido_Katana
                     SwingWarp.BeginEven(key, ChainLevel(attack), secondaryAttack ? Plugin.HeavyDuration.Value : 0f);
                     return;
                 }
+                // a full-body cut keeps its strike long enough to be seen (about 80 ms instead of 0.1.1's 45)
+                bool full = !secondaryAttack && Moves.HasFullBody(ChainLevel(attack));
                 SwingWarp.Begin(key,
                     secondaryAttack ? Plugin.HeavySpeed.Value : 1f,
-                    secondaryAttack ? Plugin.HeavyStrikeBoost.Value : Plugin.NormalStrikeBoost.Value,
+                    secondaryAttack ? Plugin.HeavyStrikeBoost.Value : full ? Plugin.FullBodyStrikeBoost.Value : Plugin.NormalStrikeBoost.Value,
                     secondaryAttack ? Plugin.HeavyDuration.Value : 0f);
+            }
+        }
+
+        // the katana's heavy with the blade already out plays its own clip on the greatsword's secondary state
+        // (Swing.CustomAnimations), so the hand does not go back to the scabbard first. only this swing's copy of the attack
+        // changes, the trigger reaches the other clients like any other
+        [HarmonyPatch(typeof(Attack), nameof(Attack.Start))]
+        private static class HeavyRoute
+        {
+            private static void Prefix(Attack __instance, Humanoid character, ItemDrop.ItemData weapon)
+            {
+                if (!(character is Player player) || player != Player.m_localPlayer || !Katana.IsKatana(weapon)) return;
+                if (__instance.m_attackAnimation != ClipSwap.HeavyTrigger || !ClipSwap.HasHeavyOut || !ClipSwap.On(player) || !IaiStance.BladeOut(player)) return;
+                __instance.m_attackAnimation = ClipSwap.HeavyOutTrigger;
+                __instance.m_attackChainLevels = 0;     // the bare trigger, no chain or random number on it
+                __instance.m_attackRandomAnimations = 0;
+                if (Plugin.LogCounters.Value) Plugin.Log.LogInfo($"katana heavy with the blade out: plays on {ClipSwap.HeavyOutTrigger}");
             }
         }
 
@@ -133,11 +152,18 @@ namespace Iaido_Katana
         [HarmonyPatch(typeof(CharacterAnimEvent), "CustomFixedUpdate")]
         private static class AnimationSpeed
         {
+            private static bool _wasPaused;
+            private static Player _pausedPlayer;
+
             private static void Postfix(CharacterAnimEvent __instance, float __0)
             {
                 if (!(AnimCharacter(__instance) is Player player) || player != Player.m_localPlayer) return;
                 var animator = AnimAnimator(__instance);
                 bool paused = PauseTimer(__instance) > 0f;
+                if (player != _pausedPlayer) _wasPaused = false; // a new local player (a relog)
+                if (paused && !_wasPaused) IaiStance.HitStop(player); // a landed swing froze the animator
+                _wasPaused = paused;
+                _pausedPlayer = player;
                 Counter.StepSwing(player, animator, paused);
                 SwingWarp.Step(player, animator, __0, paused);
                 Diagnostics.Step(player, animator);
@@ -153,6 +179,7 @@ namespace Iaido_Katana
             private static void Postfix(Player __instance)
             {
                 if (__instance == Player.m_localPlayer) Thunderclap.Update(__instance);
+                ClipSwap.Step(__instance);
                 IaiStance.Step(__instance);
             }
         }

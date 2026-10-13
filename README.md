@@ -1,6 +1,6 @@
 # Iaido_Katana
 
-Beta, work in progress. Two katanas built around the perfect parry, which draws and strikes back on its own. Comes with an iai stance, a scabbard, an ink impact frame and the Flametal Katana's Thunderclap dash cut.
+Early version (0.2.0), bugs are possible. Please report them in Issues. Two katanas built around the perfect parry, which draws and strikes back on its own. Comes with an iai stance, a scabbard, an ink impact frame and the Flametal Katana's Thunderclap dash cut.
 
 A Valheim mod by Onononoki. Get it on Thunderstore: https://thunderstore.io/c/valheim/p/Onononoki/Iaido_Katana/
 

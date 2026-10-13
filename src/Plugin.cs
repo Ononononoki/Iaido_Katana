@@ -21,7 +21,7 @@ namespace Iaido_Katana
     {
         public const string ModGuid = "onononoki.Iaido_Katana";
         public const string ModName = "Iaido_Katana";
-        public const string ModVersion = "0.1.2";
+        public const string ModVersion = "0.2.0";
 
         internal static ManualLogSource Log;
         internal static ConfigEntry<bool> CounterEnabled;
@@ -62,6 +62,11 @@ namespace Iaido_Katana
         internal static bool IsFlametal(ItemDrop.ItemData item) => item?.m_shared != null && item.m_shared.m_name == Katana.FlametalToken;
         internal static ConfigEntry<string> HeavyAnimationFrom;
         internal static ConfigEntry<bool> UpperBodySwings;
+        internal static ConfigEntry<bool> CustomAnimations;
+        internal static ConfigEntry<float> FullBodyStrikeBoost;
+        internal static ConfigEntry<float> SlashSoundVolume;
+        internal static ConfigEntry<bool> SlashMarkOn;
+        internal static ConfigEntry<float> SlashShake;
         internal static ConfigEntry<bool> OneHandedMoves;
         internal const string UpperSwing = "shovel"; // the game's upper body swing chain (the snow shovel's): shovel0, 1, 2
         internal static ConfigEntry<string> HeavyAnimationSlot;
@@ -190,6 +195,13 @@ namespace Iaido_Katana
             // weightless and cut off from the body)
             UpperBodySwings = Config.Bind("Swing", "UpperBody", false,
                 new ConfigDescription("Experimental, work in progress. Katana swings play on the game's upper body animation layer, so the legs keep walking during a swing, and the katana's own cuts show over it. Off: the greatsword swings. Set by the server in multiplayer.", null, sync));
+            // 0.2.0: the katana's own full-body animations (the three cuts and the heavy, clips made in Unity), on by
+            // default. they replace the two test switches FullBodyCuts and ClipTest of 0.1.3
+            CustomAnimations = Config.Bind("Swing", "CustomAnimations", true,
+                new ConfigDescription("The katana's own full-body animations for the three cuts and the heavy attack. Off: the older animations borrowed from Krom (the swings) and Stagbreaker (the heavy). Off while Swing.UpperBody is on. Set by the server in multiplayer.", null, sync));
+            FullBodyStrikeBoost = Config.Bind("Swing", "FullBodyStrikeBoost", 1f,
+                new ConfigDescription("Only for the katana's own animations (Swing.CustomAnimations). Like NormalStrikeBoost: 1 strikes in about 80 ms after a slow windup, higher strikes faster.", new AcceptableValueRange<float>(1f, 3f)));
+            CustomAnimations.SettingChanged += (s, e) => ApplyMoveSettings();
             OneHandedMoves = Config.Bind("Swing", "OneHandedMoves", false,
                 new ConfigDescription("Experimental, work in progress. The katana uses the one-handed sword's idle, walk, run and block animations (it stays a two-handed weapon). Set by the server in multiplayer.", null, sync));
             HeavyAnimationFrom = Config.Bind("Swing", "HeavyAnimationFrom", "SledgeStagbreaker",
@@ -265,6 +277,12 @@ namespace Iaido_Katana
                 "When you put your weapons away, the katana stays in its scabbard at the left hip instead of going on the back, and the hands are free. Needs the scabbard.");
             SlashTrailOn = Config.Bind("Visual", "SlashTrail", true,
                 "The parry's cut and the thunderclap leave a bright trail, gold for the steel katana, blue lightning for the flametal one.");
+            SlashSoundVolume = Config.Bind("Visual", "SlashSoundVolume", 1f,
+                new ConfigDescription("Volume of the katana's own whoosh as each cut's strike begins (Swing.CustomAnimations). 0 turns it off.", new AcceptableValueRange<float>(0f, 3f)));
+            SlashMarkOn = Config.Bind("Visual", "SlashMark", true,
+                "When a full-body cut lands, a thin line of light along the cut stays a moment and fades. Only on your own screen.");
+            SlashShake = Config.Bind("Visual", "SlashShake", 0.6f,
+                new ConfigDescription("Camera jolt when a full-body cut lands, on your own screen. 0 turns it off.", new AcceptableValueRange<float>(0f, 3f)));
             GlintOn = Config.Bind("Visual", "ParryGlint", true,
                 "A white glint at the scabbard mouth the moment a perfect parry lands, before the cut.");
             SparksOn = Config.Bind("Visual", "FlametalSparks", true,
@@ -336,12 +354,15 @@ namespace Iaido_Katana
             Renew(StanceTwist, -32f);
             Renew(StanceLean, 10f);
             Renew(StanceLeftHand, 0.15f);
+            // 0.2.0: Swing.CustomAnimations took over the two test switches, their old lines leave the config file
+            DropOldSettings(("Swing", "FullBodyCuts"), ("Swing", "ClipTest"));
             DumpAnimationClips = Config.Bind("Debug", "DumpAnimationClips", false,
                 "Write the names of all player animation clips and the playing states to the log once, for making replacement animations.");
             LogCounters = Config.Bind("Debug", "LogCounters", false,
                 "Write every counter's damage and the learned swing timings to the log. For tuning.");
 
             AddLocalization();
+            ClipSwap.Load();
             PrefabManager.OnVanillaPrefabsAvailable += AddItems;
             new Harmony(ModGuid).PatchAll(Assembly.GetExecutingAssembly());
             Logger.LogInfo($"{ModName} {ModVersion} loaded");
@@ -351,6 +372,22 @@ namespace Iaido_Katana
         private static void Renew(ConfigEntry<float> entry, float oldDefault)
         {
             if (Mathf.Abs(entry.Value - oldDefault) < 1e-4f) entry.Value = (float)entry.DefaultValue;
+        }
+
+        // settings that no longer exist: BepInEx keeps their lines in the file as orphans, so they are dropped here
+        private void DropOldSettings(params (string section, string key)[] old)
+        {
+            try
+            {
+                if (!(AccessTools.Property(typeof(ConfigFile), "OrphanedEntries")?.GetValue(Config) is Dictionary<ConfigDefinition, string> orphans)) return;
+                bool removed = false;
+                foreach (var (section, key) in old) removed |= orphans.Remove(new ConfigDefinition(section, key));
+                if (removed) Config.Save();
+            }
+            catch (System.Exception e)
+            {
+                Log.LogWarning($"old settings stay in the config file: {e.Message}");
+            }
         }
 
         private void AddItems()
@@ -428,7 +465,9 @@ namespace Iaido_Katana
         // the greatsword movement, the heavy attack's motion. again whenever a value changes or the server's arrives
         private static void ApplyMoveSettings()
         {
-            Moves.OwnCuts = UpperBodySwings.Value;
+            // the full-body cuts play over the base layer's greatsword swings, the upper body swings over the shovel's
+            Moves.FullBody = CustomAnimations.Value && !UpperBodySwings.Value;
+            Moves.OwnCuts = UpperBodySwings.Value || Moves.FullBody;
             foreach (var pair in BaseMoves)
             {
                 var shared = pair.Key;
