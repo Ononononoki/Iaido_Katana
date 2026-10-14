@@ -1,4 +1,6 @@
 using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
 using HarmonyLib;
 using UnityEngine;
 
@@ -24,6 +26,12 @@ namespace Iaido_Katana
         private static bool _ranged;
         private static float _parryTime;
         private static int _id;
+        // enemies parried while a counter was still coming, cut by the same counter
+        private static readonly List<(Character Who, bool Reflected)> AlsoParried = new List<(Character, bool)>();
+        // when each enemy last took a hit of the counters: one per enemy within CutAgain seconds
+        private static readonly Dictionary<Character, float> CutAt = new Dictionary<Character, float>();
+        private const float CutAgain = 0.25f;
+        private const float GatherFor = 1f; // a counter still waiting this long after its parry is stale
 
         // true from the parry until the counter swing has fully played out, recovery included
         internal static bool AnimationPlaying => _swinging;
@@ -49,6 +57,14 @@ namespace Iaido_Katana
             if (!Plugin.CounterEnabled.Value || !attacker) return;
             if (attacker.IsPlayer() && !Plugin.CounterInPvP.Value) return;
 
+            // another enemy parried while this player's counter is still coming: the same cut gives it its own counter,
+            // so parries at the same moment never add their cuts up
+            if (_player == player && _attacker && attacker != _attacker && Time.time - _parryTime < GatherFor)
+            {
+                if (!AlsoParried.Exists(p => p.Who == attacker)) AlsoParried.Add((attacker, ranged));
+                return;
+            }
+            AlsoParried.Clear();
             _player = player;
             _attacker = attacker;
             _ranged = ranged;
@@ -113,24 +129,15 @@ namespace Iaido_Katana
             var weapon = player.GetCurrentWeapon();
             if (!Katana.IsKatana(weapon)) return;
 
-            float factor = Katana.CounterFactor(player.GetRandomSkillFactor(Skills.SkillType.Swords),
-                player.GetSkillFactor(Skills.SkillType.Blocking), ranged,
+            float Factor(bool reflected) => Katana.CounterFactor(player.GetRandomSkillFactor(Skills.SkillType.Swords),
+                player.GetSkillFactor(Skills.SkillType.Blocking), reflected,
                 Plugin.CounterMultiplier.Value, Plugin.BlockBonusMax.Value, Plugin.ReflectMultiplier.Value)
                 * Katana.PreciseFactor(Plugin.ParryPrecise.Value, Plugin.ParryPreciseBonus.Value);
+            float factor = Factor(ranged);
 
-            var hit = new HitData();
-            hit.m_damage = weapon.GetDamage();
-            hit.m_damage.Modify(factor);
-            hit.m_point = attacker.GetCenterPoint();
-            hit.m_dir = (hit.m_point - player.GetCenterPoint()).normalized;
-            hit.m_attacker = player.GetZDOID();
-            hit.m_skill = Skills.SkillType.Swords;
-            hit.m_hitType = HitData.HitType.PlayerHit;
-            hit.m_toolTier = (short)weapon.m_shared.m_toolTier;
-            hit.m_pushForce = CounterPush;
-            hit.m_blockable = false;
-            hit.m_dodgeable = false;
+            var hit = Hit(player, attacker, weapon, factor);
             attacker.Damage(hit);
+            CutAt[attacker] = Time.time;
 
             KatanaFx.HitEffect(weapon.m_shared.m_hitEffect, hit.m_point, Quaternion.LookRotation(hit.m_dir), ImpactFrame.InkHides);
             // the game's own hit stop on both fighters, longer than a normal hit's (Impact.FreezeSeconds). only on this
@@ -143,6 +150,70 @@ namespace Iaido_Katana
 
             if (Plugin.LogCounters.Value)
                 Plugin.Log.LogInfo($"counter on {attacker.m_name}: {hit.m_damage.GetTotalDamage():0} before resistances and stagger (x{factor:0.00} of the katana{(ranged ? ", reflected" : "")}{(Plugin.ParryPrecise.Value ? ", precise" : "")}, {Time.time - _parryTime:0.00} s after the parry)");
+
+            // the others parried while this counter was coming: the same cut gives each its own counter
+            bool melee = !ranged;
+            foreach (var (who, reflected) in AlsoParried)
+            {
+                if (!who || who.IsDead()) continue;
+                float f = Factor(reflected);
+                var also = Hit(player, who, weapon, f);
+                who.Damage(also);
+                CutAt[who] = Time.time;
+                KatanaFx.HitEffect(weapon.m_shared.m_hitEffect, also.m_point, Quaternion.LookRotation(also.m_dir), ImpactFrame.InkHides);
+                LocalFreeze(who, Plugin.ImpactFreeze.Value);
+                melee |= !reflected;
+                if (Plugin.LogCounters.Value)
+                    Plugin.Log.LogInfo($"counter on {who.m_name}, parried with it: {also.m_damage.GetTotalDamage():0} before resistances and stagger (x{f:0.00} of the katana{(reflected ? ", reflected" : "")})");
+            }
+            AlsoParried.Clear();
+            if (melee && Plugin.CounterArea.Value) CutAround(player, attacker, weapon);
+        }
+
+        // one hit of the counter's cut, from the player toward the target
+        private static HitData Hit(Player player, Character target, ItemDrop.ItemData weapon, float factor)
+        {
+            var hit = new HitData();
+            hit.m_damage = weapon.GetDamage();
+            hit.m_damage.Modify(factor);
+            hit.m_point = target.GetCenterPoint();
+            hit.m_dir = (hit.m_point - player.GetCenterPoint()).normalized;
+            hit.m_attacker = player.GetZDOID();
+            hit.m_skill = Skills.SkillType.Swords;
+            hit.m_hitType = HitData.HitType.PlayerHit;
+            hit.m_toolTier = (short)weapon.m_shared.m_toolTier;
+            hit.m_pushForce = CounterPush;
+            hit.m_blockable = false;
+            hit.m_dodgeable = false;
+            return hit;
+        }
+
+        // 0.2.1 (the user: the counter was weak in hordes): the counter's cut also takes every other enemy within a
+        // normal swing toward the parried attacker, each with a full hit of AreaDamageMultiplier (no share between
+        // targets, like the katana's own swings). an enemy cut by a counter in the last CutAgain seconds is left out,
+        // so parries close together never add their cuts up on one enemy
+        private static void CutAround(Player player, Character attacker, ItemDrop.ItemData weapon)
+        {
+            var from = player.GetCenterPoint();
+            var ahead = attacker.transform.position - player.transform.position;
+            ahead.y = 0f;
+            ahead = ahead.sqrMagnitude > 1e-4f ? ahead.normalized : player.transform.forward;
+            foreach (var gone in CutAt.Where(c => !c.Key || Time.time - c.Value > CutAgain).Select(c => c.Key).ToList()) CutAt.Remove(gone);
+            foreach (var who in Character.GetAllCharacters())
+            {
+                if (!who || who == player || who.IsDead() || CutAt.ContainsKey(who) || !Thunderclap.Enemy(player, who)) continue;
+                var point = who.GetCenterPoint();
+                if (!Katana.InSwing(point - from, ahead, who.GetRadius(), Plugin.NormalRange.Value, Plugin.NormalAngle.Value)) continue;
+                if (Physics.Linecast(from, point, Thunderclap.Walls)) continue; // not through walls and rocks
+
+                var hit = Hit(player, who, weapon, Plugin.CounterAreaMultiplier.Value * player.GetRandomSkillFactor(Skills.SkillType.Swords));
+                who.Damage(hit);
+                CutAt[who] = Time.time;
+                KatanaFx.HitEffect(weapon.m_shared.m_hitEffect, point, Quaternion.LookRotation(hit.m_dir), ImpactFrame.InkHides);
+                LocalFreeze(who, Plugin.ImpactFreeze.Value);
+                if (Plugin.LogCounters.Value)
+                    Plugin.Log.LogInfo($"counter cut on {who.m_name}: {hit.m_damage.GetTotalDamage():0} before resistances ({Vector3.Distance(from, point):0.0} m away)");
+            }
         }
     }
 }

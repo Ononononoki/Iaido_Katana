@@ -17,7 +17,7 @@ namespace Iaido_Katana
         // the game's layers, looked up on first use (it needs the engine running)
         private static int? _ground, _walls, _creatures;
         private static int Ground => _ground ?? (_ground = LayerMask.GetMask("Default", "static_solid", "Default_small", "piece", "terrain", "vehicle")).Value;
-        private static int Walls => _walls ?? (_walls = LayerMask.GetMask("Default", "static_solid", "piece", "vehicle")).Value;
+        internal static int Walls => _walls ?? (_walls = LayerMask.GetMask("Default", "static_solid", "piece", "vehicle")).Value;
         private static int Creatures => _creatures ?? (_creatures = LayerMask.GetMask("character", "character_net", "character_ghost", "hitbox", "character_noenv")).Value;
 
         private const float WallMargin = 0.35f;   // the dash stops this far before a wall
@@ -268,7 +268,7 @@ namespace Iaido_Katana
         }
 
         // who the cut may hit: the same rule as the game's melee, and players only with pvp on both sides
-        private static bool Enemy(Player player, Character who)
+        internal static bool Enemy(Player player, Character who)
         {
             if (who.IsPlayer()) return Plugin.CounterInPvP.Value && player.IsPVPEnabled() && who.IsPVPEnabled();
             var ai = who.GetBaseAI();

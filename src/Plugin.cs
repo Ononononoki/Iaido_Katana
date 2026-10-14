@@ -21,11 +21,13 @@ namespace Iaido_Katana
     {
         public const string ModGuid = "onononoki.Iaido_Katana";
         public const string ModName = "Iaido_Katana";
-        public const string ModVersion = "0.2.0";
+        public const string ModVersion = "0.2.1";
 
         internal static ManualLogSource Log;
         internal static ConfigEntry<bool> CounterEnabled;
         internal static ConfigEntry<float> CounterMultiplier;
+        internal static ConfigEntry<bool> CounterArea;
+        internal static ConfigEntry<float> CounterAreaMultiplier;
         internal static ConfigEntry<float> BlockBonusMax;
         internal static ConfigEntry<float> ReflectMultiplier;
         internal static ConfigEntry<float> CounterDelay;
@@ -117,6 +119,8 @@ namespace Iaido_Katana
         internal static ConfigEntry<float> StanceLean;
         internal static ConfigEntry<float> StanceLeftHand;
         internal static ConfigEntry<float> StanceSpineHold;
+        internal static ConfigEntry<float> StanceTorsoHold;
+        internal static ConfigEntry<float> StanceShoulderHold;
         internal static ConfigEntry<bool> StanceSlash;
         internal static ConfigEntry<bool> StanceReady;
         internal static ConfigEntry<bool> StanceReadyRunning;
@@ -139,9 +143,17 @@ namespace Iaido_Katana
 
             CounterEnabled = Config.Bind("Counter", "Enabled", true,
                 new ConfigDescription("A perfect parry with a katana strikes the attacker back on its own.", null, sync));
-            CounterMultiplier = Config.Bind("Counter", "DamageMultiplier", 2.5f,
-                new ConfigDescription("Counter damage as a multiple of the katana's damage, before Block skill. 2.5 makes it hit like a Black Metal sword.",
+            CounterMultiplier = Config.Bind("Counter", "DamageMultiplier", 3f,
+                new ConfigDescription("Counter damage on the parried attacker as a multiple of the katana's damage, before Block skill. 2.5 hits like a Black Metal sword.",
                     new AcceptableValueRange<float>(0.5f, 10f), sync));
+            // 0.2.1: the counter hits harder (the user), a value still at 0.2.0's default moves up
+            Renew(CounterMultiplier, 2.5f);
+            CounterArea = Config.Bind("Counter", "AreaHit", true,
+                new ConfigDescription("The counter also cuts every other enemy within a normal swing toward the parried attacker (Hitbox.NormalRange and NormalAngle), each in full. Melee parries only.", null, sync));
+            CounterAreaMultiplier = Config.Bind("Counter", "AreaDamageMultiplier", 2f,
+                new ConfigDescription("Damage of that cut on the other enemies, as a multiple of the katana's damage (1 is a normal swing's hit). Each enemy takes it at most once, also when several are parried at the same moment.",
+                    new AcceptableValueRange<float>(0f, 10f), sync));
+            Renew(CounterAreaMultiplier, 1f); // the first 0.2.1 test build had 1
             BlockBonusMax = Config.Bind("Counter", "BlockSkillBonus", 1.5f,
                 new ConfigDescription("Extra counter damage from Block skill: 1x at skill 0, rising to this at skill 100.",
                     new AcceptableValueRange<float>(1f, 3f), sync));
@@ -325,8 +337,9 @@ namespace Iaido_Katana
                 "On a perfect parry the katana is drawn from the stance and cuts across from left to right, and the counter lands as the blade passes. Off plays the old fast swing (Swing.CounterAnimation). Needs Stance.Enabled.");
             StanceBlendIn = Config.Bind("Stance", "BlendIn", 0.04f,
                 new ConfigDescription("Seconds to move into the stance when the block starts.", new AcceptableValueRange<float>(0f, 0.5f)));
-            StanceBlendOut = Config.Bind("Stance", "BlendOut", 0.06f,
-                new ConfigDescription("Seconds to leave it when the block ends or a swing starts.", new AcceptableValueRange<float>(0f, 0.5f)));
+            StanceBlendOut = Config.Bind("Stance", "BlendOut", 0.12f,
+                new ConfigDescription("Seconds to leave it when the block ends, a roll or a swing starts.", new AcceptableValueRange<float>(0f, 0.5f)));
+            Renew(StanceBlendOut, 0.06f); // 0.2.1: 0.06 snapped (the user: every transition must be smooth)
             StanceGripSide = Config.Bind("Stance", "GripSide", stance.Grip.x,
                 new ConfigDescription("Where the right hand holds the grip, meters to the right of the body's middle (negative is left).", new AcceptableValueRange<float>(-0.4f, 0.4f)));
             StanceGripHeight = Config.Bind("Stance", "GripHeight", stance.Grip.y,
@@ -345,6 +358,10 @@ namespace Iaido_Katana
                 new ConfigDescription("Where the left hand holds the scabbard, meters along it from the right hand (the mouth is at about 0.12).", new AcceptableValueRange<float>(0.08f, 0.5f)));
             StanceSpineHold = Config.Bind("Stance", "SpineHold", 0.8f,
                 new ConfigDescription("How much the stance holds the upper body upright over the game's idle, walk and run, which hunch it forward. 1 holds it fully, so the hands sit exactly where the stance puts them. 0 leaves the game's.", new AcceptableValueRange<float>(0f, 1f)));
+            StanceTorsoHold = Config.Bind("Stance", "TorsoHold", 1f,
+                new ConfigDescription("How much the stance keeps the chest facing ahead while the game's clips turn the hips: blocking while moving side to side, and the sway of each running stride. The legs keep their steps. 0 leaves the game's.", new AcceptableValueRange<float>(0f, 1f)));
+            StanceShoulderHold = Config.Bind("Stance", "ShoulderHold", 0.8f,
+                new ConfigDescription("How much the stance holds the collarbones still over the game's walk and run, which rock the shoulders under the hands on the grip. 0 leaves the game's.", new AcceptableValueRange<float>(0f, 1f)));
             // the stance changed in 0.1.1: values still at 0.1.0's defaults move to the new ones, changed ones stay
             Renew(StanceGripSide, -0.1f);
             Renew(StanceGripHeight, 1.14f);

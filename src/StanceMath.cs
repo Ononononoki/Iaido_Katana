@@ -216,6 +216,24 @@ namespace Iaido_Katana
         // a rotation in the player's own frame, as a world rotation
         internal static Quaternion Turn(Quaternion rootRot, Quaternion local) => QMath.Mul(rootRot, QMath.Mul(local, QMath.Conj(rootRot)));
 
+        // how far a body bone (the hips, the chest) is turned about the body's upright against the facing, degrees,
+        // positive to the right (the rig's hips and spine face straight ahead at rest)
+        internal static float Yaw(Quaternion rootRot, Quaternion bone)
+        {
+            var f = QMath.Rotate(QMath.Mul(QMath.Conj(rootRot), bone), new Vector3(0f, 0f, 1f));
+            return (float)Math.Atan2(f.x, f.z) * Mathf.Rad2Deg;
+        }
+
+        // how far the held chest turns back: followed eases toward target (the block's own turn while blocking, else
+        // the chest's own turn, so slow turns pass and a stride's sway does not), the chest turns back by how far it
+        // is past followed, at most max either way
+        internal static float TorsoCounter(float chestYaw, float target, ref float followed, float dt, float seconds, float max)
+        {
+            float k = seconds > 0f ? 1f - (float)Math.Exp(-dt / seconds) : 1f;
+            followed += Wrap(target - followed) * k;
+            return Mathf.Clamp(Wrap(chestYaw - followed), -max, max);
+        }
+
         // one leg (thigh, shin, foot, after the hips moved) toward its crouch foot. animated is the same leg before the
         // hips moved: weight 0 keeps its ankle, knee and foot, 1 puts the ankle above the crouch foot. the foot keeps its
         // animated tilt, so it stays flat, turned out by footTurn
@@ -1068,6 +1086,18 @@ namespace Iaido_Katana
             step == HeavyOutStep ? 1f
             : step == HeavyStep ? Mathf.Clamp01((clipTime - HeavyOutFrom) / (HeavyOutTo - HeavyOutFrom))
             : step == 2 ? Mathf.Clamp01((clipTime - DiagonalOutFrom) / (DiagonalOutTo - DiagonalOutFrom)) : 0f;
+
+        // 0.2.1 (the user's tests: the left elbow jiggled in the diagonal's windup, then, pulled low in front of the chest,
+        // it bent in toward the body). in hasso both hands sit at the right shoulder and two ways of the left elbow cost
+        // about the same, so the solver swapped between them. the diagonal's baking pulls the left elbow out to the
+        // left, like the right elbow's ElbowOutPole on its side, over the whole cut like the right one. a little higher and
+        // wider than the right's mirror: (-0.6, 0.85, 0.25) left the left hand flipping 18 degrees a frame in the strike,
+        // this one has no jumps and keeps the elbow at least 0.18 m out to its side of the spine
+        private static readonly Vector3 DiagonalLeftPole = new Vector3(-0.7f, 1f, 0.3f); // from the feet, the player's frame
+        private const float DiagonalLeftNatural = ElbowOutNatural;
+
+        private static float LeftLowWeight(int step, float clipTime) =>
+            step != 2 ? 0f : Mathf.Clamp01((clipTime - DiagonalOutFrom) / (DiagonalOutTo - DiagonalOutFrom));
         private const float StepFrom = 1.15f, StepIn = 1.3f, StepHold = 1.45f, StepOut = 1.65f;
 
         private static readonly Key[] DrawUp =
@@ -1202,10 +1232,10 @@ namespace Iaido_Katana
             new BodyKey { Time = 0.95f, Drop = 0.13f, Back = -0.13f, Pitch = 8f, Hip = -5f, Twist = -2f, Lean = 18f, Head = 6f, Right = new Vector3(0.13f, 0f, 0.6f), Left = new Vector3(-0.14f, 0f, -0.16f), RightTurn = 0f, LeftTurn = -28f },
         };
 
-        private static BodyKey[] FullBodyOf(int step) => step == 0 ? FullDrawBody : step == 2 ? FullRisingBody : step == HeavyStep ? FullHeavyBody
+        private static BodyKey[] FullBodyOf(int step) => step == 0 ? FullDrawBody : step == 2 ? FullDiagonalBody : step == HeavyStep ? FullHeavyBody
             : step == HeavyOutStep ? FullHeavyOutBody : FullOverheadBody;
 
-        private static Key[] FullArmsOf(int step) => step == 0 ? FullDraw : step == 2 ? FullRising : step == HeavyStep ? FullHeavy
+        private static Key[] FullArmsOf(int step) => step == 0 ? FullDraw : step == 2 ? FullDiagonal : step == HeavyStep ? FullHeavy
             : step == HeavyOutStep ? FullHeavyOut : FullOverhead;
 
         // the steel heavy, full body: nuki uchi. drawn up out of the scabbard into a high jodan, the blade cocked behind
@@ -1292,9 +1322,7 @@ namespace Iaido_Katana
         // first and the blade cuts down across the front in one plane with the edge leading, level ahead at the hit, on
         // to low on the left, the right foot stamping, and it settles in a low guard where the sheathing can begin. both
         // hands. keyed in "Greatsword BaseAttack (3)"'s time (the hit at 0.639, the clip 1.5 s)
-        // todo (13 Oct, the user: keep the names for 0.2.0, rename later): FullRising, FullRisingBody and the clip
-        // "Iaido Rising" (ClipSwap, KatanaCheck, the Unity project's Cuts table) still carry the old rising cut's name
-        private static readonly Key[] FullRising =
+        private static readonly Key[] FullDiagonal =
         {
             // (designed as one cut plane tilted 28 degrees right of upright, the edge along the way the blade turns, then
             // each key tuned with tune_keys.py. like the heavy the cut stops at its hit with a small drift after it:
@@ -1318,7 +1346,7 @@ namespace Iaido_Katana
             Two(1.45f, new Vector3(-0.092f, 1.077f, 0.43f), 14f, -25f, 156.4f),
         };
 
-        private static readonly BodyKey[] FullRisingBody =
+        private static readonly BodyKey[] FullDiagonalBody =
         {
             // the overhead's finish, then coiled right with the front foot drawn back, the hips driving left first
             // (their peak about 55% of the way to the hit), the right foot stamping with the cut, the chest and head
@@ -1449,6 +1477,9 @@ namespace Iaido_Katana
                 into.RightNatural = Mathf.Lerp(stance.RightNatural, ElbowOutNatural, outWeight);
                 into.RightElbow = stance.RightElbow + (ElbowOutPole - stance.RightElbow) * outWeight;
                 into.RightWristLimit = Mathf.Lerp(stance.RightWristLimit, ElbowOutWristLimit, outWeight);
+                float lowWeight = LeftLowWeight(step, clipTime);
+                into.LeftElbow = stance.LeftElbow + (DiagonalLeftPole - stance.LeftElbow) * lowWeight;
+                into.LeftNatural = Mathf.Lerp(stance.LeftNatural, DiagonalLeftNatural, lowWeight);
                 return;
             }
             var keys = step == HeavyStep ? (fromScabbard ? DrawUp : from.Grip.x > 0.3f ? RaiseUpWide : RaiseUp) // the arm out right: swung round

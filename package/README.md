@@ -7,7 +7,7 @@
 ## What it does
 
 - **Steel Katana.** Two-handed, Swords skill, Plains tier. Its own damage is 40% of a Black Metal sword.
-- **Counter.** A perfect parry staggers the attacker and the katana strikes back on its own, like a Black Metal sword (1.5 times that at Block 100). Parried arrows, spears and spells send half of it back. The katana barely blocks, so only a perfect parry stops a hit.
+- **Counter.** A perfect parry staggers the attacker and the katana strikes back on its own, harder than a Black Metal sword (1.5 times that at Block 100). The same cut hits every other enemy in a normal swing's reach for double a normal hit, once each, even when several are parried at once. Parried arrows, spears and spells send half of the counter back. The katana barely blocks, so only a perfect parry stops a hit.
 - **Parry timing.** Katanas parry within 200 ms (vanilla 250). An optional precise mode gives 150 ms and counters 15% stronger, each player's own choice.
 - **Custom animations.** Full-body cuts made for the katana: a draw cut out of the scabbard, an overhead cut and a downward diagonal cut, each with a slow windup and a lightning-fast strike on the vanilla beat. The heavy attack draws up into a high stance and cuts straight down for 6 times the damage, from the scabbard or with the blade already out. Set `Swing.CustomAnimations` to false for the older animations borrowed from Krom and Stagbreaker.
 - **Iai stance and scabbard.** In an iai stance the katana rests sheathed at the left hip. A perfect parry draws it and cuts. After fighting it is flicked clean and slowly sheathed. It stays sheathed through a roll, and put away it stays at the hip. Other players see it too.
@@ -44,7 +44,9 @@ The file is `BepInEx/config/onononoki.Iaido_Katana.cfg`. Gameplay settings are s
 
 | Setting | Default | What it does |
 |---|---|---|
-| `Counter.DamageMultiplier` | 2.5 | Counter damage, times the katana's damage |
+| `Counter.DamageMultiplier` | 3 | Counter damage on the parried attacker, times the katana's damage |
+| `Counter.AreaHit` | true | The counter's cut also hits the other enemies in reach |
+| `Counter.AreaDamageMultiplier` | 2 | Their damage, times the katana's damage |
 | `Counter.HeavyDamageMultiplier` | 6 | Heavy attack damage, times the katana's damage |
 | `Parry.PreciseMode` | false | Yours. 150 ms window, stronger counters |
 | `Parry.NormalWindowMs` | 200 | Katana parry window outside precise mode |

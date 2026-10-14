@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+- The counter hits harder (3 times the katana's damage, was 2.5) and its cut also hits every other enemy in reach for double a normal hit, once each.
+- Steadier stance: the body no longer swings from side to side when blocking while moving left and right, less shoulder wobble while running.
+- Smoother animations: in the third cut the left elbow stays out to the side, no more jiggle or bending in toward the body, smooth hand-overs between the cuts and the stance, and putting the katana away and taking it out again no longer snap.
+
 ## 0.2.0
 
 - Custom full-body animations: a draw cut out of the scabbard, an overhead cut and a downward diagonal cut, each with a slow windup and a lightning-fast strike.

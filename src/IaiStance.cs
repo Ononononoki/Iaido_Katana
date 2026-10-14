@@ -33,9 +33,11 @@ namespace Iaido_Katana
         // spine first, then the arms, the order the pose is built in. the hips and legs only move in the thunderclap's crouch
         // and under the katana's own cuts
         private static readonly string[] BoneNames = { "Spine1", "Spine2", "Neck", "RightArm", "RightForeArm", "RightHand", "LeftArm", "LeftForeArm", "LeftHand",
-                                                       "Hips", "LeftUpLeg", "LeftLeg", "LeftFoot", "RightUpLeg", "RightLeg", "RightFoot", "Spine" };
+                                                       "Hips", "LeftUpLeg", "LeftLeg", "LeftFoot", "RightUpLeg", "RightLeg", "RightFoot", "Spine",
+                                                       "RightShoulder", "LeftShoulder" };
         private const int Spine1 = 0, Spine2 = 1, Neck = 2, RArm = 3, RFore = 4, RHand = 5, LArm = 6, LFore = 7, LHand = 8;
         private const int HipsBone = 9, LUp = 10, LLow = 11, LFoot = 12, RUp = 13, RLow = 14, RFoot = 15, SpineLow = 16;
+        private const int RClavicle = 17, LClavicle = 18;
 
         // the hips and legs of the ripped player at rest. the katana's own cuts stand on their own footing built from
         // these, faded in over the animator's (BodyIn) and back out after (BodyOut)
@@ -62,6 +64,25 @@ namespace Iaido_Katana
         private static readonly Quaternion RestSpine1 = new Quaternion(-0.010170685f, 0f, 0f, 0.9999483f);
         private static readonly Quaternion RestSpine2 = new Quaternion(0f, 0f, 0f, 1f);
         private static readonly Quaternion RestNeck = new Quaternion(0.34641975f, -0.008183268f, 0.026077881f, 0.9376814f);
+
+        // the collarbones at rest (the rip's rig). the walk and run rock them under the hands on the grip (ShoulderHold)
+        private static readonly Quaternion RestRClavicle = new Quaternion(-0.56428975f, -0.41886535f, 0.5860074f, -0.40339094f);
+        private static readonly Quaternion RestLClavicle = new Quaternion(0.56428975f, -0.41886535f, 0.5860074f, 0.40339094f);
+
+        // the held chest's turn against the facing in the game's block idle (48.7 degrees, measured in Unity on the
+        // game's avatar), until this player has stood in a block once and it is learned from the animator
+        private const float BlockChestYaw = 48.7f;
+        // degrees the chest may be turned back. 50 keeps it within about 60 of the hips (the block strafe to the right
+        // turns the hips 75 past the block idle), 60 would twist it 71
+        private const float TorsoMaxCounter = 50f;
+        private const float TorsoFollowBlock = 0.1f; // seconds the held chest takes to settle while blocking
+        // blocking, the hips are turned back toward the block idle's turn by this share too, at most HipsHoldMax degrees,
+        // each leg put back onto its foot (Drive): with only the chest held, the hips and legs swung 40 degrees alone under
+        // it from side to side (0.2.1, the user: "janky in the legs"). Unity on the game's clips: the chest stays at the
+        // block idle's turn strafing both ways, twisted against the hips at most 55 instead of 61
+        private const float BlockHipsYawDefault = 51.8f; // the hips' turn in the game's block idle, on the bone
+        private const float HipsHoldShare = 0.7f, HipsHoldMax = 40f;
+        private const float TorsoFollowMove = 1f;    // and to follow slow turns otherwise, much slower than a 0.7 s stride
 
         private sealed class State
         {
@@ -119,7 +140,9 @@ namespace Iaido_Katana
             internal Vector3 AnimatedHips;     // the hips' place from the animator, and what the crouch wrote
             internal Vector3 WrittenHips;
             internal readonly StanceSolver.ElbowMemory Elbows = new StanceSolver.ElbowMemory(); // the elbows turn smoothly
-            internal bool RollSheathed;        // the katana rests in the scabbard through a roll
+            internal bool RollSheathed;        // the katana rests in the scabbard through a roll, or while it is taken out
+            internal bool HadKatana;           // a katana was in the hand last frame
+            internal float TakeOutAt = -1f;    // when the put away katana was taken out again
             internal float HeavyAt = -9f;      // when this player's last heavy attack began (its clip is the combo's third)
             internal int SeenHeavy = -1;
             internal GameObject HiddenHand;    // the katana in the hand, hidden meanwhile
@@ -128,6 +151,7 @@ namespace Iaido_Katana
             internal readonly CrouchSettings LastFooting = new CrouchSettings(); // what it showed last, held while the body fades out
             internal bool HasLastFooting;
             internal bool MoveBlend;           // a full-body cut that began from the game's pose eases in from it
+            internal bool SheatheBlend;        // the sheathing after one of the katana's own clips eases in from its pose
             internal bool StrikeSounded;       // its whoosh played
             internal bool FadeCut;             // a full-body cut handed over to one of the game's swings fades out from FadePose
             internal Moves.Pose FadePose;
@@ -137,9 +161,21 @@ namespace Iaido_Katana
             internal int OwnStep;              // the combo step (or the heavy) it plays
             internal bool WasOwnClip;          // and was last frame, at this clip time
             internal float LastOwnTime;
+            internal float TorsoYaw;           // the turn the held chest follows (TorsoHold)
+            internal bool HasTorsoYaw;
+            internal float BlockYaw = BlockChestYaw; // the held chest's turn standing in a block, learned
+            internal float BlockHipsYaw = BlockHipsYawDefault; // and the hips' turn there
         }
 
         private const float FullBlendIn = 0.08f; // seconds a full-body cut takes to take over from the game's pose
+        // seconds the stance takes to hand over to one of the katana's own clips, and to take over again after one
+        // (0.2.1, the user's test: the 0.06 s blend out and the sheathing's one-frame take over looked like teleports)
+        private const float ClipHandover = 0.15f;
+        // put away (R): the hand lets go of the handle over this while the game's reach to the hip plays, and taken out
+        // again the katana stays in its scabbard until the stance has the hand on the grip, at most TakeOutMax seconds
+        // (0.2.1, the user: putting away and taking out were instant and looked broken)
+        private const float PutAwayBlend = 0.25f;
+        private const float TakeOutMax = 0.8f;
         private const float FullFadeOut = 0.1f;  // and to hand over to the game's next swing
 
         // the local player started a heavy attack on the upper body layer, whose clip is also the combo's third cut:
@@ -290,7 +326,9 @@ namespace Iaido_Katana
             animator.GetCurrentAnimatorClipInfo(0, ClipBuffer);
             string clips = string.Join("+", ClipBuffer.Where(c => c.clip).Select(c => c.clip.name));
             Plugin.Log.LogInfo($"spine: Spine {Turn(RestSpine, s.Animated[SpineLow])} Spine1 {Turn(RestSpine1, s.Animated[Spine1])} Spine2 {Turn(RestSpine2, s.Animated[Spine2])}"
-                               + $" Neck {Turn(RestNeck, s.Animated[Neck])} hips {s.AnimatedHips.y * 100f:0.00} | {clips}");
+                               + $" Neck {Turn(RestNeck, s.Animated[Neck])} hips {s.AnimatedHips.y * 100f:0.00}"
+                               + $" hips turn {StanceSolver.Yaw(player.transform.rotation, QMath.Mul(s.Bones[HipsBone].parent.rotation, s.Animated[HipsBone])):0}"
+                               + $" (chest follows {(s.HasTorsoYaw ? s.TorsoYaw.ToString("0") : "-")}, block {s.BlockYaw:0}) | {clips}");
         }
 
         private static void RestoreBack(State s)
@@ -524,6 +562,7 @@ namespace Iaido_Katana
             s.MoveStart = Time.time;
             s.MoveHold = hold;
             s.MoveClicked = false;
+            s.SheatheBlend = s.Weight < 0.99f; // the swing's clip showed, not the stance
         }
 
         // the sheathing goes on while nothing else takes over: the click when the guard meets the scabbard, and then a
@@ -748,6 +787,15 @@ namespace Iaido_Katana
             if (SlashOn) WatchSlashes(player, s);
 
             bool alive = katana && !player.IsDead();
+            // taken out again: it rests in the scabbard at the hip while the hand comes to the grip
+            if (alive && !s.HadKatana && s.HasHip && Plugin.ScabbardOn.Value)
+            {
+                s.TakeOutAt = Time.time;
+                s.RollSheathed = true;
+            }
+            s.HadKatana = katana;
+            bool takingOut = alive && s.TakeOutAt >= 0f && Time.time - s.TakeOutAt < TakeOutMax;
+            if (!takingOut) s.TakeOutAt = -1f;
             float slashTime = s.SlashStart < 0f ? -1f : Time.time < s.HoldUntil ? s.HoldAt : Time.time - s.SlashStart;
             bool slashing = SlashOn && slashTime >= 0f && slashTime < IaiSlash.Length && alive;
             if (!slashing)
@@ -828,16 +876,23 @@ namespace Iaido_Katana
 
             // the stance: while blocking, during the katana's own moves, or at rest on the idle and walk clips
             bool free = alive && !player.InAttack() && !rolling;
-            bool want = moving || (free && (thunder || player.IsBlocking() || (Plugin.StanceReady.Value && ReadyPose(AnimatorOf(player)))));
+            bool want = moving || (free && (thunder || player.IsBlocking() || takingOut || (Plugin.StanceReady.Value && ReadyPose(AnimatorOf(player)))));
 
             // a block snaps into the stance, sheathing after a swing or when coming to rest takes its time
             float blendIn = moving || (free && (player.IsBlocking() || thunder)) ? Plugin.StanceBlendIn.Value : Plugin.StanceSheathe.Value;
             float blend = want ? blendIn : s.FadeCut ? FullFadeOut : Plugin.StanceBlendOut.Value;
             // a full-body cut after one of the game's swings eases in from the game's pose, so nothing snaps
             bool easeIn = fullCut && s.MoveBlend;
-            s.Weight = bladeOut && !easeIn ? 1f
-                : Mathf.MoveTowards(s.Weight, want ? 1f : 0f, easeIn ? Time.deltaTime / FullBlendIn : blend > 0f ? Time.deltaTime / blend : 1f);
+            // the sheathing after one of the katana's own clips eases in from the clip's last pose, and an own clip
+            // starting from the stance takes over just as gently
+            bool easeSheathe = s.Move == 2 && s.SheatheBlend;
+            if (ownCut && !want) blend = Mathf.Max(blend, ClipHandover);
+            if (!katana && !want) blend = Mathf.Max(blend, PutAwayBlend); // put away: the hand lets go gently
+            s.Weight = bladeOut && !easeIn && !easeSheathe ? 1f
+                : Mathf.MoveTowards(s.Weight, want ? 1f : 0f, easeIn ? Time.deltaTime / FullBlendIn
+                    : easeSheathe ? Time.deltaTime / ClipHandover : blend > 0f ? Time.deltaTime / blend : 1f);
             if (easeIn && s.Weight >= 1f) s.MoveBlend = false;
+            if (easeSheathe && s.Weight >= 1f) s.SheatheBlend = false;
             // a roll leaves the katana in its scabbard (the hand lets go of it), until the stance has the hand on the
             // grip again, or a swing or a move takes it
             if (rolling && s.HasHip && Plugin.ScabbardOn.Value) s.RollSheathed = true;
@@ -867,6 +922,7 @@ namespace Iaido_Katana
                 s.Elbows.Has = false;
                 s.FadeCut = false;
                 s.HasLastFooting = false;
+                s.HasTorsoYaw = false;
                 return;
             }
 
@@ -1001,6 +1057,7 @@ namespace Iaido_Katana
                 b[Spine1].localRotation = RestSpine1;
                 b[Spine2].localRotation = RestSpine2;
                 b[Neck].localRotation = RestNeck;
+                s.HasTorsoYaw = false;
             }
             else
             {
@@ -1016,6 +1073,8 @@ namespace Iaido_Katana
                 // degrees running, the game's own run 4, measured in Unity on the game's avatar)
                 var taken = QMath.Mul(b[Spine2].rotation, QMath.Conj(chestBefore));
                 b[Neck].rotation = QMath.Mul(QMath.Conj(taken), b[Neck].rotation);
+                if (body <= 0f && crouch <= 0f) HoldTorso(player, s, root);
+                else s.HasTorsoYaw = false;
             }
             if (body > 0f)
             {
@@ -1064,6 +1123,54 @@ namespace Iaido_Katana
             b[LHand].rotation = left.Hand;
             for (int i = 0; i < b.Length; i++) Pose[i] = b[i].localRotation;
             return Pose;
+        }
+
+        // the game's block strafes turn the whole body (the held chest from about 49 degrees standing to 25 strafing
+        // left and -26 right), and each running stride sways it 22: the chest turns back to the block's own turn, or
+        // to its slow turns while moving (TorsoHold), evenly over the three spine bones. the head stays where the game
+        // had it and the legs keep their steps. the collarbones, which the walk and run rock under the hands on the
+        // grip, are held toward rest (ShoulderHold)
+        private static void HoldTorso(Player player, State s, Quaternion root)
+        {
+            var b = s.Bones;
+            bool blocking = player.IsBlocking();
+            float hold = Mathf.Clamp01(Plugin.StanceTorsoHold.Value);
+            if (blocking && hold > 0f)
+            {
+                float hipsYaw = StanceSolver.Yaw(root, b[HipsBone].rotation);
+                if (Standing(player) > 0.95f) s.BlockHipsYaw = hipsYaw;
+                float back = Mathf.Clamp(Mathf.DeltaAngle(s.BlockHipsYaw, hipsYaw) * HipsHoldShare, -HipsHoldMax, HipsHoldMax) * hold;
+                if (back != 0f)
+                {
+                    var keepNeck = b[Neck].rotation;
+                    Drive(player, s, -back);
+                    b[Neck].rotation = keepNeck;
+                }
+            }
+            float chestYaw = StanceSolver.Yaw(root, b[Spine2].rotation);
+            if (blocking && Standing(player) > 0.95f) s.BlockYaw = chestYaw;
+            if (!s.HasTorsoYaw)
+            {
+                s.TorsoYaw = chestYaw;
+                s.HasTorsoYaw = true;
+            }
+            // standing still the chest follows the game's turns quickly (after a cut the game turns it back to its idle,
+            // a slow follow there lagged a second behind), the slow follow only takes out a moving stride's sway
+            float follow = blocking ? TorsoFollowBlock : Mathf.Lerp(TorsoFollowMove, TorsoFollowBlock, Standing(player));
+            float counter = StanceSolver.TorsoCounter(chestYaw, blocking ? s.BlockYaw : chestYaw, ref s.TorsoYaw, Time.deltaTime,
+                follow, TorsoMaxCounter) * Mathf.Clamp01(Plugin.StanceTorsoHold.Value);
+            if (counter != 0f)
+            {
+                var neck = b[Neck].rotation;
+                var third = StanceSolver.Turn(root, QMath.Euler(0f, -counter / 3f, 0f));
+                b[SpineLow].rotation = QMath.Mul(third, b[SpineLow].rotation);
+                b[Spine1].rotation = QMath.Mul(third, b[Spine1].rotation);
+                b[Spine2].rotation = QMath.Mul(third, b[Spine2].rotation);
+                b[Neck].rotation = neck;
+            }
+            float clavicles = Mathf.Clamp01(Plugin.StanceShoulderHold.Value);
+            b[RClavicle].localRotation = QMath.Nlerp(b[RClavicle].localRotation, RestRClavicle, clavicles);
+            b[LClavicle].localRotation = QMath.Nlerp(b[LClavicle].localRotation, RestLClavicle, clavicles);
         }
 
         // the hips turned about the body's upright by degrees, each leg back onto the foot it stood on

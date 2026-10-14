@@ -1,6 +1,6 @@
 {
     "name":  "Iaido_Katana",
-    "version_number":  "0.2.0",
+    "version_number":  "0.2.1",
     "website_url":  "https://github.com/Ononononoki/Iaido_Katana",
     "description":  "Early version, bugs are possible. Two katanas built around the perfect parry, which draws and strikes back on its own. Custom full-body animations, an iai stance, a scabbard, an impact frame and a Thunderclap dash cut.",
     "dependencies":  [

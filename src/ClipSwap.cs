@@ -24,7 +24,7 @@ namespace Iaido_Katana
         {
             ["Greatsword BaseAttack (1)"] = "Iaido Draw",           // cut 0, the draw cut out of the scabbard
             ["Greatsword BaseAttack (2)"] = "Iaido Overhead",       // cut 1, the overhead from the draw's end
-            ["Greatsword BaseAttack (3)"] = "Iaido Rising",         // cut 2, the downward diagonal from the overhead's end (todo: rename the clip, the user's call 13 Oct)
+            ["Greatsword BaseAttack (3)"] = "Iaido Diagonal",       // cut 2, the downward diagonal from the overhead's end
             ["Sledge-Attack1"] = "Iaido Heavy",                     // the heavy, drawn up from the scabbard
             ["Greatsword Secondary Attack"] = HeavyOutClip,         // the heavy with the blade already out
         };

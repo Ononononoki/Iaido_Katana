@@ -113,6 +113,15 @@ namespace Iaido_Katana
         internal static float CounterFactor(float swordsFactor, float blockSkill, bool ranged, float multiplier, float blockBonusMax, float reflect) =>
             multiplier * swordsFactor * (1f + (blockBonusMax - 1f) * Mathf.Clamp01(blockSkill)) * (ranged ? reflect : 1f);
 
+        // whether a creature is inside a swing: to is from the player's middle to the creature's, ahead the swing's
+        // flat direction. within range of its body's edge and within half the angle either side, like the game's melee
+        internal static bool InSwing(Vector3 to, Vector3 ahead, float radius, float range, float angle)
+        {
+            var flat = new Vector3(to.x, 0f, to.z);
+            if (flat.magnitude - radius > range || Mathf.Abs(to.y) > range) return false;
+            return flat.sqrMagnitude < 1e-4f || Vector3.Angle(ahead, flat) <= angle * 0.5f;
+        }
+
         // animation speed at a point of a re-timed swing before its hit. the windup and the strike both scale with
         // pace, so the time to the hit is hitTime / pace
         internal static float WarpSpeed(float animTime, float hitTime, float windupShare, float windupSpeed, float strikeSpeed, float pace) =>
