@@ -152,7 +152,7 @@ namespace Iaido_Katana
         // the right hand on the grip in front of the belly, the elbow bent and hanging down the side, the forearm across
         // the belly and the wrist straight (found by StancePreview tune, the user's drawing of 11 Oct)
         internal Vector3 Grip = new Vector3(-0.05f, 1.12f, 0.38f);
-        internal float BladeYaw = 215f;     // the blade points back and out past the left hip (180 is straight back, which runs through a cape)
+        internal float BladeYaw = 222f;     // the blade points back and out past the left hip (180 is straight back, which runs through a cape), the scabbard clear of the forward left thigh while walking
         internal float BladePitch = 26f;    // and slopes down
         internal float EdgeRoll = -104f;    // the edge turned out from up, so the right hand lies on the grip palm down with a straight wrist
         internal float LeftAlongBlade = 0.3f; // the left hand on the scabbard this far from the grip, the arm hanging relaxed
@@ -224,15 +224,10 @@ namespace Iaido_Katana
             return (float)Math.Atan2(f.x, f.z) * Mathf.Rad2Deg;
         }
 
-        // how far the held chest turns back: followed eases toward target (the block's own turn while blocking, else
-        // the chest's own turn, so slow turns pass and a stride's sway does not), the chest turns back by how far it
-        // is past followed, at most max either way
-        internal static float TorsoCounter(float chestYaw, float target, ref float followed, float dt, float seconds, float max)
-        {
-            float k = seconds > 0f ? 1f - (float)Math.Exp(-dt / seconds) : 1f;
-            followed += Wrap(target - followed) * k;
-            return Mathf.Clamp(Wrap(chestYaw - followed), -max, max);
-        }
+        // how far the chest turns back to face ahead (it is turned chestYaw from the facing), share hold of it. the
+        // stance's own turn then sits on a chest square to the facing, the way the arms were made, whatever the game's
+        // idle, walk, run or block does to the chest
+        internal static float ChestBack(float chestYaw, float hold) => Wrap(chestYaw) * Mathf.Clamp01(hold);
 
         // one leg (thigh, shin, foot, after the hips moved) toward its crouch foot. animated is the same leg before the
         // hips moved: weight 0 keeps its ankle, knee and foot, 1 puts the ankle above the crouch foot. the foot keeps its
@@ -1082,10 +1077,35 @@ namespace Iaido_Katana
         private static readonly Vector3 ElbowOutPole = new Vector3(0.6f, 0.85f, 0.25f); // out to the right and low, from the hips
         private const float ElbowOutNatural = 0.3f, ElbowOutWristLimit = 80f;
 
+        // in the draw's follow-through two ways of the right arm cost about the same (the hand's roll held at 90, or about
+        // 65 with the elbow 3 cm further in). a pole out to the right, pulled fully, holds the first over these clip
+        // seconds, in and out smoothly, so the solver does not swap between them (a weaker pull still swaps)
+        private const float DrawOutIn = 0.62f, DrawOutFrom = 0.68f, DrawOutTo = 0.82f, DrawOutOut = 0.9f;
+        private static readonly Vector3 DrawPole = new Vector3(0.6f, 1.1f, 0.05f);
+        private const float DrawNatural = 0f;
+
+        private static float DrawElbowWeight(int step, float clipTime) =>
+            step != 0 ? 0f : Smooth((clipTime - DrawOutIn) / (DrawOutFrom - DrawOutIn)) * (1f - Smooth((clipTime - DrawOutTo) / (DrawOutOut - DrawOutTo)));
+
+        // at the diagonal's strike start the right arm has two ways (the elbow out with the wrist bent about 60, or folded
+        // in across the chest with the wrist bent about 30). the elbow out pole is pulled fully over these clip seconds,
+        // in and out smoothly, so the solver keeps the elbow out (natural 0.15 still swaps once)
+        private const float StrikeHoldIn = 0.26f, StrikeHoldFrom = 0.3f, StrikeHoldTo = 0.39f, StrikeHoldOut = 0.43f;
+        private const float StrikeHoldNatural = 0f;
+
+        private static float StrikeHoldWeight(int step, float clipTime) =>
+            step != 2 ? 0f : Smooth((clipTime - StrikeHoldIn) / (StrikeHoldFrom - StrikeHoldIn)) * (1f - Smooth((clipTime - StrikeHoldTo) / (StrikeHoldOut - StrikeHoldTo)));
+
         private static float ElbowOutWeight(int step, float clipTime) =>
             step == HeavyOutStep ? 1f
             : step == HeavyStep ? Mathf.Clamp01((clipTime - HeavyOutFrom) / (HeavyOutTo - HeavyOutFrom))
             : step == 2 ? Mathf.Clamp01((clipTime - DiagonalOutFrom) / (DiagonalOutTo - DiagonalOutFrom)) : 0f;
+
+        private static float Smooth(float u)
+        {
+            u = Mathf.Clamp01(u);
+            return u * u * (3f - 2f * u);
+        }
 
         // 0.2.1 (the user's tests: the left elbow jiggled in the diagonal's windup, then, pulled low in front of the chest,
         // it bent in toward the body). in hasso both hands sit at the right shoulder and two ways of the left elbow cost
@@ -1206,10 +1226,11 @@ namespace Iaido_Katana
             Two(0.34f, new Vector3(-0.04f, 1.9f, 0.44f), 163.9f, -71.9f, -38.3f),    // coming over the top
             // from here the hands stay near the middle in front, like a real two-handed cut (12 Oct, the user: far left
             // the right arm crossed the belly; tuned again with GripX -0.08 to 0.04)
-            Two(0.385f, new Vector3(0.04f, 1.51f, 0.65f), 24f, -82f, 116.1f),        // the blade up ahead, the wrists snapping over
-            Two(0.43f, new Vector3(-0.08f, 1.36f, 0.4f), 18f, -42f, 85.8f),          // down in front
-            Two(0.492f, new Vector3(-0.08f, 1.08f, 0.428f), 18f, -6f, 122.3f),       // the hit, level at the chest
-            Two(0.57f, new Vector3(-0.08f, 0.98f, 0.44f), 14.3f, 16f, 133.2f),       // on through, the tip low, the arms out in front
+            // (the grip stays within about 0.52 m out: the left hand sits 0.2 m behind the right, further out its arm locks)
+            Two(0.385f, new Vector3(0.04f, 1.51f, 0.52f), 24f, -82f, 116.1f),        // the blade up ahead, the wrists snapping over
+            Two(0.43f, new Vector3(-0.08f, 1.36f, 0.43f), 18f, -42f, 85.8f),         // down in front
+            Two(0.492f, new Vector3(-0.065f, 1.077f, 0.5f), 18f, -2f, 132.7f),       // the hit, level at the chest, the hands half a meter out
+            Two(0.57f, new Vector3(-0.06f, 1.0f, 0.48f), 16f, 14f, 136f),            // on through, the tip low, the arms out in front
             Two(0.66f, new Vector3(-0.08f, 1.04f, 0.44f), 18f, 11f, 119.5f),         // a small recoil up
             Two(0.95f, new Vector3(-0.08f, 1.08f, 0.44f), 18f, -2f, 129.5f),         // risen into zanshin, the tip just below level
         };
@@ -1477,6 +1498,10 @@ namespace Iaido_Katana
                 into.RightNatural = Mathf.Lerp(stance.RightNatural, ElbowOutNatural, outWeight);
                 into.RightElbow = stance.RightElbow + (ElbowOutPole - stance.RightElbow) * outWeight;
                 into.RightWristLimit = Mathf.Lerp(stance.RightWristLimit, ElbowOutWristLimit, outWeight);
+                float drawWeight = DrawElbowWeight(step, clipTime);
+                into.RightNatural = Mathf.Lerp(into.RightNatural, DrawNatural, drawWeight);
+                into.RightElbow = into.RightElbow + (DrawPole - into.RightElbow) * drawWeight;
+                into.RightNatural = Mathf.Lerp(into.RightNatural, StrikeHoldNatural, StrikeHoldWeight(step, clipTime));
                 float lowWeight = LeftLowWeight(step, clipTime);
                 into.LeftElbow = stance.LeftElbow + (DiagonalLeftPole - stance.LeftElbow) * lowWeight;
                 into.LeftNatural = Mathf.Lerp(stance.LeftNatural, DiagonalLeftNatural, lowWeight);

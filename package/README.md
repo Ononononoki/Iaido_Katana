@@ -2,7 +2,7 @@
 
 **A katana that wins on the parry. Its own slashes are light, but every perfect parry strikes back on its own.**
 
-> Early version (0.2.0), bugs are possible. Please report them on [GitHub](https://github.com/Ononononoki/Iaido_Katana/issues).
+> Please report bugs on [GitHub](https://github.com/Ononononoki/Iaido_Katana/issues).
 
 ## What it does
 
@@ -37,6 +37,7 @@ Both katanas can be refined past level 4 at the Forge of Potential with a Battle
 | Damage | 38 slash | 60 slash, 15 lightning | 95 slash |
 | Block | 10 | 13 | 39 |
 | Parry bonus | 13x | 13x | 2x |
+| Stamina, swing and heavy | 16 and 40 | 20 and 100 | 14 and 28 |
 
 ## Config
 
@@ -48,6 +49,8 @@ The file is `BepInEx/config/onononoki.Iaido_Katana.cfg`. Gameplay settings are s
 | `Counter.AreaHit` | true | The counter's cut also hits the other enemies in reach |
 | `Counter.AreaDamageMultiplier` | 2 | Their damage, times the katana's damage |
 | `Counter.HeavyDamageMultiplier` | 6 | Heavy attack damage, times the katana's damage |
+| `Counter.SwingStamina` | 16 | Stamina of the Steel Katana's swings (`FlametalSwingStamina` 20 for the Flametal one) |
+| `Counter.HeavyStamina` | 40 | Stamina of the Steel Katana's heavy attack (`Thunderclap.Stamina` 100 for the Flametal one) |
 | `Parry.PreciseMode` | false | Yours. 150 ms window, stronger counters |
 | `Parry.NormalWindowMs` | 200 | Katana parry window outside precise mode |
 | `Thunderclap.Distance` | 13 | Dash length in meters |

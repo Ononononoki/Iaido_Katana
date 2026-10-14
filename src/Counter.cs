@@ -30,7 +30,7 @@ namespace Iaido_Katana
         private static readonly List<(Character Who, bool Reflected)> AlsoParried = new List<(Character, bool)>();
         // when each enemy last took a hit of the counters: one per enemy within CutAgain seconds
         private static readonly Dictionary<Character, float> CutAt = new Dictionary<Character, float>();
-        private const float CutAgain = 0.25f;
+        private const float CutAgain = 0.15f;
         private const float GatherFor = 1f; // a counter still waiting this long after its parry is stale
 
         // true from the parry until the counter swing has fully played out, recovery included

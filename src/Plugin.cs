@@ -21,7 +21,7 @@ namespace Iaido_Katana
     {
         public const string ModGuid = "onononoki.Iaido_Katana";
         public const string ModName = "Iaido_Katana";
-        public const string ModVersion = "0.2.1";
+        public const string ModVersion = "0.2.2";
 
         internal static ManualLogSource Log;
         internal static ConfigEntry<bool> CounterEnabled;
@@ -45,6 +45,7 @@ namespace Iaido_Katana
         internal static ConfigEntry<float> HeavyDuration;
         internal static ConfigEntry<float> HeavyDamageMultiplier;
         internal static ConfigEntry<float> HeavyStamina;
+        internal static ConfigEntry<float> SwingStamina;
         internal static ConfigEntry<float> FlametalSwingStamina;
         internal static ConfigEntry<float> FlametalHeavyStamina;
 
@@ -75,6 +76,7 @@ namespace Iaido_Katana
         internal static ConfigEntry<bool> CounterAnimation;
         internal static ConfigEntry<float> CounterAnimationSpeed;
         internal static ConfigEntry<bool> LogCounters;
+        internal static ConfigEntry<bool> RecordPoses;
         internal static ConfigEntry<bool> ImpactEnabled;
         internal static ConfigEntry<float> ImpactFlashSeconds;
         internal static ConfigEntry<float> ImpactContrast;
@@ -192,13 +194,19 @@ namespace Iaido_Katana
             HeavyDamageMultiplier = Config.Bind("Counter", "HeavyDamageMultiplier", 6f,
                 new ConfigDescription("Damage of the heavy attack as a multiple of the katana's damage (Krom's thrust is 3).", new AcceptableValueRange<float>(1f, 10f), sync));
             HeavyDamageMultiplier.SettingChanged += (s, e) => ApplyAttackSettings();
-            HeavyStamina = Config.Bind("Counter", "HeavyStamina", 50f,
-                new ConfigDescription("Stamina cost of the heavy attack (Krom's thrust is 40), so it cannot be spammed.", new AcceptableValueRange<float>(0f, 100f), sync));
+            HeavyStamina = Config.Bind("Counter", "HeavyStamina", 40f,
+                new ConfigDescription("Stamina cost of the Steel Katana's heavy attack (Krom's thrust is 40), so it cannot be spammed.", new AcceptableValueRange<float>(0f, 100f), sync));
             HeavyStamina.SettingChanged += (s, e) => ApplyAttackSettings();
-            // the flametal katana hits much harder, so its swings cost more (20% over the steel one)
-            FlametalSwingStamina = Config.Bind("Counter", "FlametalSwingStamina", 24f,
-                new ConfigDescription("Stamina cost of the Flametal Katana's normal swings (the Steel Katana's are 20, like Krom's).", new AcceptableValueRange<float>(0f, 100f), sync));
+            // a heavy stamina still at the old default moves to the new one
+            Renew(HeavyStamina, 50f);
+            SwingStamina = Config.Bind("Counter", "SwingStamina", 16f,
+                new ConfigDescription("Stamina cost of the Steel Katana's normal swings (Krom's are 20).", new AcceptableValueRange<float>(0f, 100f), sync));
+            SwingStamina.SettingChanged += (s, e) => ApplyAttackSettings();
+            // the flametal katana hits much harder, so its swings cost more (25% over the steel one)
+            FlametalSwingStamina = Config.Bind("Counter", "FlametalSwingStamina", 20f,
+                new ConfigDescription("Stamina cost of the Flametal Katana's normal swings (SwingStamina is the Steel Katana's).", new AcceptableValueRange<float>(0f, 100f), sync));
             FlametalSwingStamina.SettingChanged += (s, e) => ApplyAttackSettings();
+            Renew(FlametalSwingStamina, 24f);
             FlametalHeavyStamina = Config.Bind("Counter", "FlametalHeavyStamina", 60f,
                 new ConfigDescription("Stamina cost of the Flametal Katana's heavy attack (HeavyStamina is the Steel Katana's).", new AcceptableValueRange<float>(0f, 100f), sync));
             FlametalHeavyStamina.SettingChanged += (s, e) => ApplyAttackSettings();
@@ -356,11 +364,11 @@ namespace Iaido_Katana
                 new ConfigDescription("Forward lean of the upper body, degrees.", new AcceptableValueRange<float>(-20f, 40f)));
             StanceLeftHand = Config.Bind("Stance", "LeftHandOnBlade", stance.LeftAlongBlade,
                 new ConfigDescription("Where the left hand holds the scabbard, meters along it from the right hand (the mouth is at about 0.12).", new AcceptableValueRange<float>(0.08f, 0.5f)));
-            StanceSpineHold = Config.Bind("Stance", "SpineHold", 0.8f,
+            StanceSpineHold = Config.Bind("Stance", "SpineHold", 1f,
                 new ConfigDescription("How much the stance holds the upper body upright over the game's idle, walk and run, which hunch it forward. 1 holds it fully, so the hands sit exactly where the stance puts them. 0 leaves the game's.", new AcceptableValueRange<float>(0f, 1f)));
             StanceTorsoHold = Config.Bind("Stance", "TorsoHold", 1f,
                 new ConfigDescription("How much the stance keeps the chest facing ahead while the game's clips turn the hips: blocking while moving side to side, and the sway of each running stride. The legs keep their steps. 0 leaves the game's.", new AcceptableValueRange<float>(0f, 1f)));
-            StanceShoulderHold = Config.Bind("Stance", "ShoulderHold", 0.8f,
+            StanceShoulderHold = Config.Bind("Stance", "ShoulderHold", 1f,
                 new ConfigDescription("How much the stance holds the collarbones still over the game's walk and run, which rock the shoulders under the hands on the grip. 0 leaves the game's.", new AcceptableValueRange<float>(0f, 1f)));
             // the stance changed in 0.1.1: values still at 0.1.0's defaults move to the new ones, changed ones stay
             Renew(StanceGripSide, -0.1f);
@@ -371,12 +379,17 @@ namespace Iaido_Katana
             Renew(StanceTwist, -32f);
             Renew(StanceLean, 10f);
             Renew(StanceLeftHand, 0.15f);
+            Renew(StanceBladeYaw, 215f); // a yaw still at the old default moves to the new one
+            Renew(StanceSpineHold, 0.8f); // holds still at the old defaults move to the new ones
+            Renew(StanceShoulderHold, 0.8f);
             // 0.2.0: Swing.CustomAnimations took over the two test switches, their old lines leave the config file
             DropOldSettings(("Swing", "FullBodyCuts"), ("Swing", "ClipTest"));
             DumpAnimationClips = Config.Bind("Debug", "DumpAnimationClips", false,
                 "Write the names of all player animation clips and the playing states to the log once, for making replacement animations.");
             LogCounters = Config.Bind("Debug", "LogCounters", false,
                 "Write every counter's damage and the learned swing timings to the log. For tuning.");
+            RecordPoses = Config.Bind("Debug", "RecordPoses", false,
+                "While a katana is in your hand, write your pose 120 times a second to BepInEx\\IaidoPoses (a new file each time it is taken out). For tuning the animations.");
 
             AddLocalization();
             ClipSwap.Load();
@@ -523,7 +536,7 @@ namespace Iaido_Katana
                 bool flametal = FlametalShared.Contains(shared);
                 heavy.m_damageMultiplier = HeavyDamageMultiplier.Value;
                 heavy.m_attackStamina = flametal ? FlametalHeavyStamina.Value : HeavyStamina.Value;
-                if (flametal) normal.m_attackStamina = FlametalSwingStamina.Value;
+                normal.m_attackStamina = flametal ? FlametalSwingStamina.Value : SwingStamina.Value;
                 normal.m_attackRange = NormalRange.Value;
                 normal.m_attackAngle = NormalAngle.Value;
                 normal.m_attackRayWidth = NormalRayWidth.Value;
