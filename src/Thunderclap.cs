@@ -41,11 +41,21 @@ namespace Iaido_Katana
         private static bool _impact;
         private static bool _trailMade;
         private static readonly List<Target> Targets = new List<Target>();
+        private static readonly List<TreeTarget> Trees = new List<TreeTarget>();
 
         private sealed class Target
         {
             internal Character Who;
             internal float At; // meters along the path
+            internal bool Hit;
+        }
+
+        // a tree, log or stump the dash chops as it passes
+        private sealed class TreeTarget
+        {
+            internal IDestructible Tree;
+            internal Vector3 Point;
+            internal float At;
             internal bool Hit;
         }
 
@@ -162,7 +172,24 @@ namespace Iaido_Katana
                 Targets.Add(new Target { Who = who, At = Mathf.Clamp(Vector3.Dot(who.transform.position - _from, _dir), 0f, _distance) });
             }
             Targets.Sort((a, b) => a.At.CompareTo(b.At));
-            if (Plugin.LogCounters.Value) Plugin.Log.LogInfo($"thunderclap: cut, dash {_distance:0.0} m, {Targets.Count} on the way");
+            FindTrees(player);
+            if (Plugin.LogCounters.Value) Plugin.Log.LogInfo($"thunderclap: cut, dash {_distance:0.0} m, {Targets.Count} on the way, {Trees.Count} trees, logs or stumps to chop");
+        }
+
+        // the trees, logs and stumps along the path, including the one the dash stops at (it counts as a wall)
+        private static void FindTrees(Player player)
+        {
+            Trees.Clear();
+            if (!Chop.On(player.GetCurrentWeapon())) return;
+            var seen = new HashSet<IDestructible>();
+            var start = _from + Vector3.up * BodyHeight;
+            foreach (var hit in Physics.SphereCastAll(start, Plugin.ThunderWidth.Value, _dir, _distance + WallMargin + WallRadius, Chop.Mask))
+            {
+                var tree = Chop.Tree(hit.collider);
+                if (tree == null || !seen.Add(tree)) continue;
+                var point = hit.collider.ClosestPointOnBounds(start);
+                Trees.Add(new TreeTarget { Tree = tree, Point = point, At = Mathf.Clamp(Vector3.Dot(point - _from, _dir), 0f, _distance) });
+            }
         }
 
         // the dash is over: eikthyr's lightning from where the player stands back along the path. a network effect, so
@@ -177,12 +204,15 @@ namespace Iaido_Katana
             else Plugin.Log.LogWarning($"thunderclap: effect '{TrailFx}' not found");
         }
 
-        // how far the dash can go: short of walls, rocks and buildings, and of ground that climbs like a wall
+        // how far the dash can go: short of walls, rocks and buildings, and of ground that climbs like a wall. trees, logs
+        // and stumps do not stop it, it cuts through them
         internal static float Reach(Vector3 from, Vector3 dir, float max)
         {
             float reach = max;
-            if (Physics.SphereCast(from + Vector3.up * BodyHeight, WallRadius, dir, out var wall, max, Walls))
-                reach = Mathf.Max(0f, wall.distance - WallMargin);
+            float wall = max;
+            foreach (var hit in Physics.SphereCastAll(from + Vector3.up * BodyHeight, WallRadius, dir, max, Walls))
+                if (hit.distance < wall && Chop.Tree(hit.collider) == null) wall = hit.distance;
+            if (wall < max) reach = Mathf.Max(0f, wall - WallMargin);
             float y = from.y;
             const int steps = 10;
             for (int i = 1; i <= steps; i++)
@@ -259,11 +289,20 @@ namespace Iaido_Katana
                 if (!_impact)
                 {
                     _impact = true;
-                    ImpactFrame.Play(hit.m_point);
+                    ImpactFrame.Play(hit.m_point, false);
                 }
                 player.RaiseSkill(Skills.SkillType.Swords, 1f);
                 if (Plugin.LogCounters.Value)
                     Plugin.Log.LogInfo($"thunderclap on {who.m_name}: {hit.m_damage.GetTotalDamage():0} before resistances, {target.At:0.0} m along");
+            }
+            foreach (var tree in Trees)
+            {
+                if (tree.Hit || tree.At > passed) continue;
+                tree.Hit = true;
+                if (!(tree.Tree is Component part) || !part) continue;
+                Chop.Hit(player, weapon, tree.Tree, tree.Point, _dir);
+                if (Plugin.LogCounters.Value)
+                    Plugin.Log.LogInfo($"thunderclap chop on {part.name}: chop {Chop.Damage(weapon):0}, tier {Chop.Tier(weapon)}, {tree.At:0.0} m along");
             }
         }
 

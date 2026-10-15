@@ -1,8 +1,8 @@
 {
     "name":  "Iaido_Katana",
-    "version_number":  "0.2.2",
+    "version_number":  "0.3.0",
     "website_url":  "https://github.com/Ononononoki/Iaido_Katana",
-    "description":  "Two katanas built around the perfect parry, which draws and strikes back on its own. Custom full-body animations, an iai stance, a scabbard, an impact frame and a Thunderclap dash cut.",
+    "description":  "Two katanas built around the perfect parry, which draws and strikes back on its own. Iaido-inspired cuts, an iai stance with a scabbard, tree chopping and a Zenitsu-style Thunderclap dash.",
     "dependencies":  [
                          "denikson-BepInExPack_Valheim-5.4.2351",
                          "ValheimModding-Jotunn-2.30.2"

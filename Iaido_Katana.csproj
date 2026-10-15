@@ -49,6 +49,7 @@
     <EmbeddedResource Include="art\out\katana_flametal.obj" LogicalName="Iaido_Katana.katana_flametal.obj" />
     <EmbeddedResource Include="art\out\saya_flametal.obj" LogicalName="Iaido_Katana.saya_flametal.obj" />
     <EmbeddedResource Include="art\out\katana_*.png" LogicalName="Iaido_Katana.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="art\sound\heavy_swell.wav" LogicalName="Iaido_Katana.heavy_swell.wav" />
     <!-- the katana's own animation clips, built by Tools\Modding\UnityAnim (Unity 6000.0.75f1), when present -->
     <EmbeddedResource Include="anim\iaido_anims" LogicalName="Iaido_Katana.iaido_anims" Condition="Exists('anim\iaido_anims')" />
   </ItemGroup>

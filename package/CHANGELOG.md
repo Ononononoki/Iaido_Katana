@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0
+
+- The counter's cut sweeps wider and further (170 degrees, 4 m, was 110 degrees and 3 m) and leaves a golden (Steel) or blue-white lightning (Flametal) afterimage that other players with the mod see too. The parry glint now shows and is bigger.
+- Chopping: the counter's cut, the Steel Katana's heavy attack and the Thunderclap fell trees, logs and stumps like an axe. New `Chop.*` settings.
+- The katana's own cuts hit along each blade's path, and every swing hits all enemies in reach at full damage.
+- Steel Katana heavy attack: hits from high down to the feet, a golden glint climbs the blade with a rising ring and shines at the tip, a deeper swing sound and an upright golden afterimage.
+- Thunderclap: a charge-up sound and a ball of lightning in the hands while gathering, a streak of light along the dash (`Thunderclap.Afterimage`), a 4 m wide path (was 2 m) that cuts through trees, no crash sound during the dash.
+- Fixed the blade shaking on female characters while standing, walking, running and blocking.
+- Works with Valheim 1.0.20.
+
 ## 0.2.2
 
 - Lighter stamina: the Steel Katana's swings cost 16 (was 20) and its heavy attack 40 (was 50), the Flametal Katana's swings 20 (was 24). The Thunderclap stays at 100. Config files still at the old values move to the new ones. New setting `Counter.SwingStamina` for the Steel Katana's swings.

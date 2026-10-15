@@ -114,11 +114,12 @@ namespace Iaido_Katana
             multiplier * swordsFactor * (1f + (blockBonusMax - 1f) * Mathf.Clamp01(blockSkill)) * (ranged ? reflect : 1f);
 
         // whether a creature is inside a swing: to is from the player's middle to the creature's, ahead the swing's
-        // flat direction. within range of its body's edge and within half the angle either side, like the game's melee
-        internal static bool InSwing(Vector3 to, Vector3 ahead, float radius, float range, float angle)
+        // flat direction. within range of its body's edge and within half the angle either side, like the game's melee,
+        // and within height up or down (the range when not given)
+        internal static bool InSwing(Vector3 to, Vector3 ahead, float radius, float range, float angle, float height = -1f)
         {
             var flat = new Vector3(to.x, 0f, to.z);
-            if (flat.magnitude - radius > range || Mathf.Abs(to.y) > range) return false;
+            if (flat.magnitude - radius > range || Mathf.Abs(to.y) > (height < 0f ? range : height)) return false;
             return flat.sqrMagnitude < 1e-4f || Vector3.Angle(ahead, flat) <= angle * 0.5f;
         }
 

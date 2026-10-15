@@ -21,13 +21,24 @@ namespace Iaido_Katana
     {
         public const string ModGuid = "onononoki.Iaido_Katana";
         public const string ModName = "Iaido_Katana";
-        public const string ModVersion = "0.2.2";
+        public const string ModVersion = "0.3.0";
 
         internal static ManualLogSource Log;
         internal static ConfigEntry<bool> CounterEnabled;
         internal static ConfigEntry<float> CounterMultiplier;
         internal static ConfigEntry<bool> CounterArea;
         internal static ConfigEntry<float> CounterAreaMultiplier;
+        internal static ConfigEntry<float> CounterAreaAngle;
+        internal static ConfigEntry<float> CounterAreaRange;
+        internal static ConfigEntry<bool> AfterimageOn;
+        internal static ConfigEntry<string> ThunderAfterimage;
+        internal static ConfigEntry<float> ChargeSoundVolume;
+        internal static ConfigEntry<bool> ChargeBallOn;
+        internal static ConfigEntry<bool> ChopOn;
+        internal static ConfigEntry<float> SteelChop;
+        internal static ConfigEntry<int> SteelChopTier;
+        internal static ConfigEntry<float> FlametalChop;
+        internal static ConfigEntry<int> FlametalChopTier;
         internal static ConfigEntry<float> BlockBonusMax;
         internal static ConfigEntry<float> ReflectMultiplier;
         internal static ConfigEntry<float> CounterDelay;
@@ -151,11 +162,27 @@ namespace Iaido_Katana
             // 0.2.1: the counter hits harder (the user), a value still at 0.2.0's default moves up
             Renew(CounterMultiplier, 2.5f);
             CounterArea = Config.Bind("Counter", "AreaHit", true,
-                new ConfigDescription("The counter also cuts every other enemy within a normal swing toward the parried attacker (Hitbox.NormalRange and NormalAngle), each in full. Melee parries only.", null, sync));
+                new ConfigDescription("The counter also cuts every other enemy within a wide swing toward the parried attacker (Counter.AreaRange and AreaAngle), each in full. Melee parries only.", null, sync));
             CounterAreaMultiplier = Config.Bind("Counter", "AreaDamageMultiplier", 2f,
                 new ConfigDescription("Damage of that cut on the other enemies, as a multiple of the katana's damage (1 is a normal swing's hit). Each enemy takes it at most once, also when several are parried at the same moment.",
                     new AcceptableValueRange<float>(0f, 10f), sync));
             Renew(CounterAreaMultiplier, 1f); // the first 0.2.1 test build had 1
+            CounterAreaAngle = Config.Bind("Counter", "AreaAngle", 170f,
+                new ConfigDescription("Width of the counter's cut around the player, in degrees, centered on the parried attacker (170 reaches 85 degrees to each side).",
+                    new AcceptableValueRange<float>(30f, 360f), sync));
+            CounterAreaRange = Config.Bind("Counter", "AreaRange", 4f,
+                new ConfigDescription("How far the counter's cut reaches from the player, meters (up and down it reaches 3 m). Trees, logs and stumps in it are chopped too.",
+                    new AcceptableValueRange<float>(1f, 8f), sync));
+            ChopOn = Config.Bind("Chop", "Enabled", true,
+                new ConfigDescription("The counter's cut and the Thunderclap's dash also chop trees, logs and stumps in their reach, like an axe.", null, sync));
+            SteelChop = Config.Bind("Chop", "SteelChop", 50f,
+                new ConfigDescription("Chop damage of the Steel Katana's counter cut (the Crystal Battleaxe has 50).", new AcceptableValueRange<float>(0f, 200f), sync));
+            SteelChopTier = Config.Bind("Chop", "SteelToolTier", 3,
+                new ConfigDescription("Tool tier of that chop: trees that need a higher tier take nothing (the Crystal Battleaxe has 3).", new AcceptableValueRange<int>(0, 10), sync));
+            FlametalChop = Config.Bind("Chop", "FlametalChop", 60f,
+                new ConfigDescription("Chop damage of the Flametal Katana's counter cut and Thunderclap dash (the Black Metal Axe has 60).", new AcceptableValueRange<float>(0f, 200f), sync));
+            FlametalChopTier = Config.Bind("Chop", "FlametalToolTier", 4,
+                new ConfigDescription("Tool tier of that chop (the Black Metal Axe has 4).", new AcceptableValueRange<int>(0, 10), sync));
             BlockBonusMax = Config.Bind("Counter", "BlockSkillBonus", 1.5f,
                 new ConfigDescription("Extra counter damage from Block skill: 1x at skill 0, rising to this at skill 100.",
                     new AcceptableValueRange<float>(1f, 3f), sync));
@@ -249,9 +276,9 @@ namespace Iaido_Katana
             HeavyRange = Config.Bind("Hitbox", "HeavyRange", 4.0f,
                 new ConfigDescription("Reach of the heavy attack in meters (Krom's thrust 3).", new AcceptableValueRange<float>(1.5f, 8f), sync));
             HeavyAngle = Config.Bind("Hitbox", "HeavyAngle", 45f,
-                new ConfigDescription("Width of the heavy attack in degrees (Krom's thrust 30).", new AcceptableValueRange<float>(5f, 180f), sync));
+                new ConfigDescription("Width of the heavy attack in degrees with the older borrowed animations (Krom's thrust 30). The katana's own heavy (Swing.CustomAnimations) cuts from high to low, a bit wider than the torso. Its chop takes this width.", new AcceptableValueRange<float>(5f, 180f), sync));
             HeavyRayWidth = Config.Bind("Hitbox", "HeavyRayWidth", 0.9f,
-                new ConfigDescription("Thickness of the heavy attack in meters (Krom's thrust 0.5).", new AcceptableValueRange<float>(0.1f, 2f), sync));
+                new ConfigDescription("Thickness of the heavy attack in meters with the older borrowed animations (Krom's thrust 0.5). The katana's own heavy (Swing.CustomAnimations) is torso wide.", new AcceptableValueRange<float>(0.1f, 2f), sync));
             foreach (var entry in new[] { NormalRange, NormalAngle, NormalRayWidth, HeavyRange, HeavyAngle, HeavyRayWidth })
                 entry.SettingChanged += (s, e) => ApplyAttackSettings();
             // the impact frame is only on your own screen, so every player sets it for themselves
@@ -305,6 +332,8 @@ namespace Iaido_Katana
                 new ConfigDescription("Camera jolt when a full-body cut lands, on your own screen. 0 turns it off.", new AcceptableValueRange<float>(0f, 3f)));
             GlintOn = Config.Bind("Visual", "ParryGlint", true,
                 "A white glint at the scabbard mouth the moment a perfect parry lands, before the cut.");
+            AfterimageOn = Config.Bind("Visual", "ParryAfterimage", true,
+                "The parry's cut leaves a wide arc of light around the player for a moment, gold for the steel katana, blue white lightning for the flametal one, as wide and far as the cut reaches (Counter.AreaAngle, AreaRange). Yours, for every player you see.");
             SparksOn = Config.Bind("Visual", "FlametalSparks", true,
                 "Lightning crackles at the flametal katana's scabbard mouth while it is sheathed in the stance.");
             ThunderOn = Config.Bind("Thunderclap", "Enabled", true,
@@ -315,12 +344,20 @@ namespace Iaido_Katana
                 new ConfigDescription("How long the crouch gathers before the cut. A stagger or a dodge in that time cancels it, and the stamina is gone.", new AcceptableValueRange<float>(0.5f, 4f), sync));
             ThunderDistance = Config.Bind("Thunderclap", "Distance", 13f,
                 new ConfigDescription("How far the dash goes, meters. It stops short of walls, rocks and buildings.", new AcceptableValueRange<float>(0f, 20f), sync));
-            ThunderWidth = Config.Bind("Thunderclap", "Width", 1f,
-                new ConfigDescription("How far to each side of the path a creature can be and still be cut, meters.", new AcceptableValueRange<float>(0.3f, 3f), sync));
+            ThunderWidth = Config.Bind("Thunderclap", "Width", 2f,
+                new ConfigDescription("How far to each side of the path a creature can be and still be cut, meters (the blade sweeps from 1.6 m left to 2 m right of the body).", new AcceptableValueRange<float>(0.3f, 3f), sync));
+            Renew(ThunderWidth, 1f); // a width still at the old default moves to the new one
             ThunderStamina = Config.Bind("Thunderclap", "Stamina", 100f,
                 new ConfigDescription("Stamina the thunderclap costs, before gear and the Swords skill lower it like any attack's.", new AcceptableValueRange<float>(0f, 200f), sync));
             ThunderTrailOn = Config.Bind("Thunderclap", "LightningTrail", true,
                 "Eikthyr's lightning from where the dash ends back along its path. Everyone near sees it.");
+            ChargeSoundVolume = Config.Bind("Thunderclap", "ChargeSoundVolume", 1f,
+                new ConfigDescription("Volume of the gathering's sound (a rising electric hum, crackles, a charge and a scream, a thunder crack on the cut), before the game's sound effect volume. 0 turns it off. Yours.", new AcceptableValueRange<float>(0f, 2f)));
+            ThunderAfterimage = Config.Bind("Thunderclap", "Afterimage", "Path",
+                new ConfigDescription("What the cut leaves behind when the dash ends: Path, a long streak of blue white light along the whole dash. Arc, the parry's arc around the player where the dash ended (a test version). Both, or Off. Yours, for every player you see.",
+                    new AcceptableValueList<string>("Path", "Arc", "Both", "Off")));
+            ChargeBallOn = Config.Bind("Thunderclap", "ChargeBall", true,
+                "A ball of lightning grows at the hands while the crouch gathers and bursts on the cut. Yours, for every player you see.");
             ImpactClick = Config.Bind("Impact", "ClickSound", "sfx_metal_blocked",
                 "The click when the blade is back in its scabbard after the parry's cut, heard by everyone near. Played high and cut very short. Empty turns it off.");
             ImpactClickPitch = Config.Bind("Impact", "ClickPitch", 2.2f,
@@ -523,6 +560,22 @@ namespace Iaido_Katana
                 string from = HeavyAnimationFrom.Value == "UpperBody" ? "SledgeStagbreaker" : HeavyAnimationFrom.Value;
                 if (!BorrowHeavyAnimation(shared, from) && from != "SledgeIron") BorrowHeavyAnimation(shared, "SledgeIron");
             }
+            ApplyAttackSettings(); // the hit areas follow the animations
+        }
+
+        // the katana's own animations (Moves.FullBody) get hit areas made for them, the borrowed ones keep krom's: every
+        // swing passes through rocks, trees and objects, and the heavy, a cut from overhead to the ground, is a fan from
+        // top to bottom (from 1 m up, 60 degrees above to 60 below level: over the head out in front, down to the ground
+        // a little over half a meter ahead), a bit wider than the torso, the creature rays a little thicker
+        private const float OwnHeavyRayWidth = 0.45f, OwnHeavyAngle = 120f, OwnHeavyCreatureExtra = 0.15f;
+        private static readonly Dictionary<Attack, (bool Walls, float Low, float High, float Extra, Attack.AttackType Type)> KromHit =
+            new Dictionary<Attack, (bool, float, float, float, Attack.AttackType)>();
+
+        private static (bool Walls, float Low, float High, float Extra, Attack.AttackType Type) Krom(Attack attack)
+        {
+            if (!KromHit.TryGetValue(attack, out var krom))
+                KromHit[attack] = krom = (attack.m_hitThroughWalls, attack.m_attackHeightChar1, attack.m_attackHeightChar2, attack.m_attackRayWidthCharExtra, attack.m_attackType);
+            return krom;
         }
 
         // every katana of a kind shares its item data, so a change or a server sync applies to the next swing
@@ -541,8 +594,19 @@ namespace Iaido_Katana
                 normal.m_attackAngle = NormalAngle.Value;
                 normal.m_attackRayWidth = NormalRayWidth.Value;
                 heavy.m_attackRange = HeavyRange.Value;
-                heavy.m_attackAngle = HeavyAngle.Value;
-                heavy.m_attackRayWidth = HeavyRayWidth.Value;
+                bool own = Moves.FullBody;
+                var kromNormal = Krom(normal);
+                var kromHeavy = Krom(heavy);
+                normal.m_hitThroughWalls = own || kromNormal.Walls;
+                heavy.m_hitThroughWalls = own || kromHeavy.Walls;
+                heavy.m_attackType = own ? Attack.AttackType.Vertical : kromHeavy.Type;
+                heavy.m_attackAngle = own ? OwnHeavyAngle : HeavyAngle.Value;
+                heavy.m_attackRayWidth = own ? OwnHeavyRayWidth : HeavyRayWidth.Value;
+                heavy.m_attackHeightChar1 = own ? 0f : kromHeavy.Low; // the fan itself runs from high to low
+                heavy.m_attackHeightChar2 = own ? 0f : kromHeavy.High;
+                heavy.m_attackRayWidthCharExtra = own ? OwnHeavyCreatureExtra : kromHeavy.Extra;
+                normal.m_lowerDamagePerHit = false; // every swing cuts every enemy it reaches in full
+                heavy.m_lowerDamagePerHit = false;
             }
         }
 

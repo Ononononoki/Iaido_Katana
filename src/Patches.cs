@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection.Emit;
+using System.Runtime.CompilerServices;
 using HarmonyLib;
 using UnityEngine;
 
@@ -106,6 +107,7 @@ namespace Iaido_Katana
                 }
                 // a full-body cut keeps its strike long enough to be seen (about 80 ms instead of 0.1.1's 45)
                 bool full = !secondaryAttack && Moves.HasFullBody(ChainLevel(attack));
+                if (full) CutShape.Apply(attack, ChainLevel(attack));
                 SwingWarp.Begin(key,
                     secondaryAttack ? Plugin.HeavySpeed.Value : 1f,
                     secondaryAttack ? Plugin.HeavyStrikeBoost.Value : full ? Plugin.FullBodyStrikeBoost.Value : Plugin.NormalStrikeBoost.Value,
@@ -127,6 +129,87 @@ namespace Iaido_Katana
                 __instance.m_attackChainLevels = 0;     // the bare trigger, no chain or random number on it
                 __instance.m_attackRandomAnimations = 0;
                 if (Plugin.LogCounters.Value) Plugin.Log.LogInfo($"katana heavy with the blade out: plays on {ClipSwap.HeavyOutTrigger}");
+            }
+        }
+
+        // the katana's own cuts hit where their blade goes (the blade's sweep measured from the clips with
+        // devtools\session_2026-10-15b\hit_zone_laptop.py): the draw a sideways fan turned to the right, where it sweeps,
+        // the overhead a fan from high to low, the diagonal the same a little thicker (the game's fan can not lean, so it
+        // stands for the slant). 3 m of reach, the blade itself reaches about 2.4 m. only this swing's copy of the attack
+        // changes
+        internal static class CutShape
+        {
+            private struct Shape
+            {
+                internal Attack.AttackType Type;
+                internal float Angle, Ray, Range, Yaw;
+            }
+
+            private static readonly Shape[] Shapes =
+            {
+                new Shape { Type = Attack.AttackType.Horizontal, Angle = 80f, Ray = 0.4f, Range = 3f, Yaw = 29f }, // blade -32..90 degrees
+                new Shape { Type = Attack.AttackType.Vertical, Angle = 80f, Ray = 0.4f, Range = 3f, Yaw = 9f },    // down to 0.95 m at 7..15
+                new Shape { Type = Attack.AttackType.Vertical, Angle = 80f, Ray = 0.5f, Range = 3f, Yaw = 10f },   // down to 0.99 m at 2..11
+            };
+
+            private static readonly ConditionalWeakTable<Attack, StrongBox<float>> Turns = new ConditionalWeakTable<Attack, StrongBox<float>>();
+
+            internal static void Apply(Attack attack, int step)
+            {
+                if (step < 0 || step >= Shapes.Length) return;
+                var shape = Shapes[step];
+                attack.m_attackType = shape.Type;
+                attack.m_attackAngle = shape.Angle;
+                attack.m_attackRayWidth = shape.Ray;
+                attack.m_attackRange = shape.Range;
+                if (shape.Type == Attack.AttackType.Vertical)
+                {
+                    // the fan itself runs from high to low, no extra creature rays above and below
+                    attack.m_attackHeightChar1 = 0f;
+                    attack.m_attackHeightChar2 = 0f;
+                }
+                Turns.Remove(attack);
+                Turns.Add(attack, new StrongBox<float>(shape.Yaw));
+                if (Plugin.LogCounters.Value) Plugin.Log.LogInfo($"katana cut {step} hit area: {shape.Type} {shape.Angle:0} degrees, ray {shape.Ray} m, {shape.Range} m, turned {shape.Yaw:0} degrees right");
+            }
+
+            internal static float Turn(Attack attack) => Turns.TryGetValue(attack, out var box) ? box.Value : 0f;
+
+            internal static int Count => Shapes.Length;
+            internal static (float Angle, float Range, float Yaw) Of(int step) => (Shapes[step].Angle, Shapes[step].Range, Shapes[step].Yaw);
+        }
+
+        // the fan of a shaped cut is turned toward where its blade sweeps
+        [HarmonyPatch(typeof(Attack), "GetMeleeAttackDir")]
+        private static class CutTurn
+        {
+            private static void Postfix(Attack __instance, ref Vector3 attackDir)
+            {
+                float yaw = CutShape.Turn(__instance);
+                if (yaw != 0f) attackDir = Quaternion.AngleAxis(yaw, Vector3.up) * attackDir;
+            }
+        }
+
+        // the steel katana's heavy chops the trees, logs and stumps in its reach like the counter (the flametal's heavy is
+        // the thunderclap, which chops along its dash)
+        [HarmonyPatch(typeof(Attack), "DoMeleeAttack")]
+        private static class HeavyChop
+        {
+            private static readonly AccessTools.FieldRef<Attack, Humanoid> Owner = AccessTools.FieldRefAccess<Attack, Humanoid>("m_character");
+            private static readonly AccessTools.FieldRef<Attack, ItemDrop.ItemData> Weapon = AccessTools.FieldRefAccess<Attack, ItemDrop.ItemData>("m_weapon");
+            private static readonly AccessTools.FieldRef<Humanoid, bool> Secondary = AccessTools.FieldRefAccess<Humanoid, bool>("m_currentAttackIsSecondary");
+
+            private static void Postfix(Attack __instance)
+            {
+                if (!(Owner(__instance) is Player player) || player != Player.m_localPlayer || !Secondary(player)) return;
+                var weapon = Weapon(__instance);
+                if (!Chop.On(weapon) || Plugin.IsFlametal(weapon)) return;
+                var ahead = player.transform.forward;
+                ahead.y = 0f;
+                if (ahead.sqrMagnitude < 1e-4f) return;
+                int chopped = Chop.CutAround(player, weapon, player.GetCenterPoint(), ahead.normalized, __instance.m_attackRange, Plugin.HeavyAngle.Value, Counter.AreaHeight);
+                if (Plugin.LogCounters.Value)
+                    Plugin.Log.LogInfo($"katana heavy chop: {chopped} trees, logs or stumps (chop {Chop.Damage(weapon):0}, tier {Chop.Tier(weapon)})");
             }
         }
 

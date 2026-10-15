@@ -47,14 +47,15 @@ namespace Iaido_Katana
         internal static float InkHides => Plugin.ImpactEnabled.Value && Plugin.ImpactInk.Value && Plugin.ImpactInkSeconds.Value > 0f
             ? Plugin.ImpactInkSeconds.Value + 0.03f : 0f;
 
-        internal static void Play(Vector3 point)
+        // crash false leaves out the metal crash (the thunderclap has its own thunder)
+        internal static void Play(Vector3 point, bool crash = true)
         {
             if (!Plugin.ImpactEnabled.Value) return;
             if (Plugin.ImpactInk.Value && Plugin.ImpactInkSeconds.Value > 0f) Plugin.Instance.StartCoroutine(InkFrame(++_inkId, point));
             else WhiteFlash();
             Flash();
             Shake();
-            Sound(point);
+            Sound(point, crash);
         }
 
         // one overlay over the whole screen, the ink picture under the white flash
@@ -343,10 +344,10 @@ namespace Iaido_Katana
 
         // two layers: a sharp metal ring, and under it a crash slowed down and cut short with a fade, so it is
         // heavy but stays a hit
-        private static void Sound(Vector3 point)
+        private static void Sound(Vector3 point, bool crash)
         {
             PlayLayer(point, Plugin.ImpactSound.Value, 0f, Plugin.ImpactVolume.Value, 0f);
-            PlayLayer(point, Plugin.ImpactCrash.Value, Plugin.ImpactCrashPitch.Value, Plugin.ImpactCrashVolume.Value, Plugin.ImpactCrashSeconds.Value);
+            if (crash) PlayLayer(point, Plugin.ImpactCrash.Value, Plugin.ImpactCrashPitch.Value, Plugin.ImpactCrashVolume.Value, Plugin.ImpactCrashSeconds.Value);
         }
 
         // one clip of a game sound, played straight into the sound effects mixer. the sound prefabs are network

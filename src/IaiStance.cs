@@ -17,6 +17,14 @@ namespace Iaido_Katana
         private static readonly AccessTools.FieldRef<VisEquipment, int> BackItem = AccessTools.FieldRefAccess<VisEquipment, int>("m_currentRightBackItemHash");
         private static readonly AccessTools.FieldRef<VisEquipment, GameObject> BackInstance = AccessTools.FieldRefAccess<VisEquipment, GameObject>("m_rightBackItemInstance");
         private static readonly AccessTools.FieldRef<VisEquipment, GameObject> HandInstance = AccessTools.FieldRefAccess<VisEquipment, GameObject>("m_rightItemInstance");
+        // the game's collarbone move for the female body (CharacterAnimEvent.CustomLateUpdate), see ShoulderPlaces
+        private static readonly AccessTools.FieldRef<Character, CharacterAnimEvent> AnimEventOf = AccessTools.FieldRefAccess<Character, CharacterAnimEvent>("m_animEvent");
+        private static readonly AccessTools.FieldRef<CharacterAnimEvent, bool> FemaleHack = AccessTools.FieldRefAccess<CharacterAnimEvent, bool>("m_femaleHack");
+        private static readonly AccessTools.FieldRef<CharacterAnimEvent, Transform> LeftShoulderOf = AccessTools.FieldRefAccess<CharacterAnimEvent, Transform>("m_leftShoulder");
+        private static readonly AccessTools.FieldRef<CharacterAnimEvent, Transform> RightShoulderOf = AccessTools.FieldRefAccess<CharacterAnimEvent, Transform>("m_rightShoulder");
+        private static readonly AccessTools.FieldRef<CharacterAnimEvent, float> FemaleOffset = AccessTools.FieldRefAccess<CharacterAnimEvent, float>("m_femaleOffset");
+        private static readonly AccessTools.FieldRef<CharacterAnimEvent, float> MaleOffset = AccessTools.FieldRefAccess<CharacterAnimEvent, float>("m_maleOffset");
+        private static readonly AccessTools.FieldRef<CharacterAnimEvent, VisEquipment> AnimEventVis = AccessTools.FieldRefAccess<CharacterAnimEvent, VisEquipment>("m_visEquipment");
         // the cut's trail runs from the draw to the end of the cut, then fades out in its colours
         private const float TrailFrom = 0.04f, TrailTo = 0.2f;
         // counts the slashes of a player in its network data, so every client sees each one
@@ -133,6 +141,15 @@ namespace Iaido_Katana
             internal float ThunderPrep;
             internal int SeenThunder = -1;
             internal int ThunderStage;         // 0 gathering, 1 cutting, 2 holding and sheathing, 3 sheathed
+            internal ThunderCharge Charge;     // the gathering's sound and ball of lightning, while it plays
+            internal bool ArcShown;            // this parry's afterimage was made
+            internal float HeavyLast = -1f;    // the steel heavy's clip time last frame (a smaller one is a new heavy)
+            internal bool HeavySwell, HeavyClimb, HeavyShone, HeavySwung, HeavyArc; // its swell, glint, shine, swing sound and afterimage
+            internal float HeavySwellAt, HeavySwellPeak; // when the swell began and how many seconds later it was set to peak
+            internal Transform HeavyGlint;     // the glint climbing the blade
+            internal GameObject HeavyShine;    // the shine at the tip, gone when the blade starts to fall
+            internal Vector3 ThunderFrom;      // where the thunderclap's dash began, as this client saw it
+            internal bool ThunderTrailShown;   // its afterimage was made
             internal Vector3 AnimatedHips;     // the hips' place from the animator, and what the crouch wrote
             internal Vector3 WrittenHips;
             internal readonly StanceSolver.ElbowMemory Elbows = new StanceSolver.ElbowMemory(); // the elbows turn smoothly
@@ -211,6 +228,7 @@ namespace Iaido_Katana
             s.ThunderStart = Time.time;
             s.ThunderPrep = prep;
             s.ThunderStage = 0;
+            StartCharge(player, s);
             var zdo = NViewOf(player)?.GetZDO();
             if (zdo == null) return;
             int count = zdo.GetInt(ThunderCount, 0) + 1;
@@ -230,6 +248,16 @@ namespace Iaido_Katana
         private static void EndThunder(Player player, State s)
         {
             s.ThunderStart = -1f;
+            if (s.Charge) s.Charge.Cancel(); // called off before the cut: it fades out, after the cut it plays on
+            s.Charge = null;
+        }
+
+        // the gathering's sound and ball of lightning at the hands, for this player on this client
+        private static void StartCharge(Player player, State s)
+        {
+            if (s.Charge) s.Charge.Cancel();
+            var bones = s.Bones;
+            s.Charge = ThunderCharge.Begin(player, bones != null ? bones[RHand] : null, bones != null ? bones[LHand] : null, s.ThunderPrep);
         }
 
         // another client's player started or called off a thunderclap
@@ -244,12 +272,107 @@ namespace Iaido_Katana
                 s.ThunderStart = Time.time;
                 s.ThunderPrep = zdo.GetFloat(ThunderPrepKey, Plugin.ThunderPrep.Value);
                 s.ThunderStage = 0;
+                StartCharge(player, s);
             }
             s.SeenThunder = count;
             if (s.ThunderStart >= 0f && zdo.GetInt(ThunderStop, 0) == count) EndThunder(player, s);
         }
 
-        // the glint as the blade leaves, and the click when it is back in its scabbard
+        private const float RemoteTrailDelay = 0.2f; // another client's player reaches the dash's end this much later here
+
+        // the steel heavy on every client, by its clip's time (the two heavy clips share these keys): the swell rises from
+        // the start and peaks as the swing sound starts, a gold glint climbs the blade from the guard to the tip with it,
+        // slow and faint first, then faster and brighter like the swell, and shines at the tip until the blade starts to
+        // fall, the swing sound is loudest on the hit, and an upright golden afterimage stays where it struck
+        // the climb takes ClimbShare of the swell's rise (climb = share squared), the shine stays where the tip was and is
+        // gone when the strike begins (the raise's end with the swing warp) or at the latest when the cut comes over the
+        // top (FallAt)
+        private const float GlintFrom = 0.45f, FallAt = 0.896f, ClimbFrom = 0.3f, ClimbTo = 1.8f, ClimbShare = 0.85f, ClimbFaint = 0.15f;
+        private const float WarpedRaise = 0.95f, SwellWait = 0.1f; // the warp's raise plays below this speed (0.58 by default)
+        private const float SwellHeight = 1.2f; // the swell sounds from the body's middle, not the hand at the side
+
+        // real seconds from this clip time until the clip reaches target at the speed now. with the swing warp (the
+        // animator speed is synced, so every client plays it) the raise is slow up to its end and the strike after it
+        // takes almost no time, so anything past the raise's end is reached at about the raise's end
+        private static float HeavyUntil(float clipTime, float speed, float target)
+        {
+            float end = Plugin.SwingTimeWarp.Value ? Mathf.Min(target, SwingWarp.HeavyRaiseEnd) : target;
+            return Mathf.Max(0f, end - clipTime) / speed;
+        }
+
+        private static void HeavyEvents(Player player, State s, float clipTime)
+        {
+            if (clipTime < s.HeavyLast) EndHeavy(s); // a new heavy began
+            s.HeavyLast = clipTime;
+            if (!s.Attach) return;
+            var animator = AnimatorOf(player);
+            float speed = animator && animator.speed > 0.05f ? animator.speed : 1f;
+            var blade = s.Attach.rotation * Vector3.forward;
+            bool flametal = RightItem(VisOf(player)) == FlametalHash;
+            float hit = Moves.HitOf(s.OwnStep);
+            // the swell waits for the warp's slow raise speed to arrive (a frame or two, longer for another client's
+            // player) so its timing is right, at most until SwellWait into the clip
+            if (!s.HeavySwell && clipTime < GlintFrom && (!Plugin.SwingTimeWarp.Value || speed < WarpedRaise || clipTime >= SwellWait))
+            {
+                s.HeavySwell = true;
+                s.HeavySwellAt = Time.time;
+                s.HeavySwellPeak = HeavyUntil(clipTime, speed, hit - HeavySound.SwingPeak * speed);
+                HeavySound.Swell(player.transform.position + Vector3.up * SwellHeight, s.HeavySwellPeak);
+                if (Plugin.LogCounters.Value) Plugin.Log.LogInfo($"steel heavy: swell from clip {clipTime:0.00} s at speed {speed:0.00}, peaking in {s.HeavySwellPeak:0.00} s");
+            }
+            float share = s.HeavySwell ? Mathf.Clamp01((Time.time - s.HeavySwellAt) / Mathf.Max(0.05f, s.HeavySwellPeak * ClimbShare)) : 0f;
+            if (!s.HeavyClimb && s.HeavySwell && share < 1f)
+            {
+                s.HeavyClimb = true;
+                s.HeavyGlint = KatanaFx.ClimbingGlint();
+                if (Plugin.LogCounters.Value) Plugin.Log.LogInfo($"steel heavy: glint climbing for {s.HeavySwellPeak * ClimbShare:0.00} s with the swell");
+            }
+            if (s.HeavyGlint && share < 1f)
+            {
+                float climb = share * share; // slow first, faster to the end
+                KatanaFx.MoveGlint(s.HeavyGlint, s.Attach.position + blade * Mathf.Lerp(ClimbFrom, ClimbTo, climb), Mathf.Lerp(ClimbFaint, 1f, climb));
+            }
+            if (!s.HeavyShone && s.HeavySwell && share >= 1f)
+            {
+                s.HeavyShone = true;
+                if (s.HeavyGlint) Object.Destroy(s.HeavyGlint.gameObject);
+                s.HeavyGlint = null;
+                var tip = s.Attach.position + blade * ClimbTo;
+                float lasts = Mathf.Max(0.05f, HeavyUntil(clipTime, speed, FallAt));
+                s.HeavyShine = KatanaFx.Glint(tip, true, lasts);
+                if (Plugin.LogCounters.Value) Plugin.Log.LogInfo($"steel heavy: shine at the tip for {lasts:0.00} s, {tip.y - player.transform.position.y:0.00} m up, {Vector3.Distance(tip, player.transform.position):0.00} m from the feet");
+            }
+            if (s.HeavyShine && clipTime >= FallAt)
+            {
+                Object.Destroy(s.HeavyShine);
+                s.HeavyShine = null;
+            }
+            if (!s.HeavySwung && clipTime >= hit - HeavySound.SwingPeak * speed)
+            {
+                s.HeavySwung = true;
+                HeavySound.Swing(s.Attach.position);
+                if (Plugin.LogCounters.Value && s.HeavySwell)
+                    Plugin.Log.LogInfo($"steel heavy: swing sound {Time.time - s.HeavySwellAt:0.00} s after the swell began (its peak set for {s.HeavySwellPeak:0.00} s)");
+            }
+            if (!s.HeavyArc && clipTime >= hit)
+            {
+                s.HeavyArc = true;
+                KatanaFx.SlashArc(player.transform, flametal, false, true);
+                if (Plugin.LogCounters.Value) Plugin.Log.LogInfo($"steel heavy: struck, upright afterimage for {player.GetPlayerName()}");
+            }
+        }
+
+        private static void EndHeavy(State s)
+        {
+            if (s.HeavyGlint) Object.Destroy(s.HeavyGlint.gameObject);
+            s.HeavyGlint = null;
+            if (s.HeavyShine) Object.Destroy(s.HeavyShine);
+            s.HeavyShine = null;
+            s.HeavySwell = s.HeavyClimb = s.HeavyShone = s.HeavySwung = s.HeavyArc = false;
+            s.HeavyLast = -1f;
+        }
+
+        // the glint as the blade leaves, the afterimage when the dash ends, and the click when it is back in its scabbard
         private static void ThunderEvents(Player player, State s, float t)
         {
             float prep = s.ThunderPrep;
@@ -257,6 +380,20 @@ namespace Iaido_Katana
             {
                 s.ThunderStage = 1;
                 KatanaFx.Glint(Mouth(s));
+                s.ThunderFrom = player.transform.position;
+                s.ThunderTrailShown = false;
+            }
+            // the dash is over (a little later for another client's player, whose position arrives late): its afterimage
+            var nview = NViewOf(player);
+            float trailAt = prep + Thunderclap.DashSeconds + (nview && nview.IsOwner() ? 0f : RemoteTrailDelay);
+            if (s.ThunderStage >= 1 && !s.ThunderTrailShown && t >= trailAt)
+            {
+                s.ThunderTrailShown = true;
+                string kind = Plugin.ThunderAfterimage.Value;
+                if (kind == "Path" || kind == "Both") KatanaFx.SlashPath(s.ThunderFrom, player.transform.position);
+                if (kind == "Arc" || kind == "Both") KatanaFx.SlashArc(player.transform, true, false);
+                if (Plugin.LogCounters.Value && kind != "Off")
+                    Plugin.Log.LogInfo($"thunderclap afterimage ({kind}) for {player.GetPlayerName()}, {Vector3.Distance(s.ThunderFrom, player.transform.position):0.0} m");
             }
             if (s.ThunderStage == 1 && t >= prep + Thunder.Cut) s.ThunderStage = 2;
             if (s.ThunderStage == 2 && t >= Thunder.SheathedAt(prep))
@@ -921,8 +1058,19 @@ namespace Iaido_Katana
                 if (cut && alive) StartSheathe(player, s, Plugin.StanceZanshin.Value);
                 s.SlashStart = -1f;
             }
-            else if (!s.InSlash) SlashBegins(s);
+            else if (!s.InSlash)
+            {
+                SlashBegins(s);
+                s.ArcShown = false;
+            }
             s.InSlash = slashing;
+            // the cut passes the middle: its afterimage, on this client for this player
+            if (slashing && !s.ArcShown && slashTime >= IaiSlash.HitTime)
+            {
+                s.ArcShown = true;
+                KatanaFx.SlashArc(player.transform, RightItem(VisOf(player)) == FlametalHash);
+                if (Plugin.LogCounters.Value) Plugin.Log.LogInfo($"parry afterimage for {player.GetPlayerName()} ({Plugin.CounterAreaAngle.Value:0} degrees, {Plugin.CounterAreaRange.Value:0.#} m)");
+            }
 
             // the flametal thunderclap: its own timeline over the stance, with the crouch
             WatchThunder(player, s);
@@ -978,12 +1126,15 @@ namespace Iaido_Katana
                              || (ownCut && Moves.InFullCut(s.OwnStep, clipTime)));
             bool fullCut = s.Move == 1 && Moves.HasFullBody(s.MoveStep);
             s.Trail?.Bold(fullCut || ownCut);
-            // a full-body cut's own whoosh as its strike begins, on every client
-            if ((fullCut || ownCut) && !s.StrikeSounded && clipTime >= Moves.FullStrikeAt(fullCut ? s.MoveStep : s.OwnStep))
+            // a full-body cut's own whoosh as its strike begins, on every client (the heavy has its own swing)
+            bool heavy = ownCut && (s.OwnStep == Moves.HeavyStep || s.OwnStep == Moves.HeavyOutStep);
+            if ((fullCut || ownCut) && !heavy && !s.StrikeSounded && clipTime >= Moves.FullStrikeAt(fullCut ? s.MoveStep : s.OwnStep))
             {
                 s.StrikeSounded = true;
                 KatanaFx.SlashSound(s.Attach.position, RightItem(VisOf(player)) == FlametalHash);
             }
+            if (heavy) HeavyEvents(player, s, clipTime);
+            else EndHeavy(s);
             // the hips and legs stand on the cut's own footing during the katana's cuts, the thunderclap has its crouch
             // the cut's own footing (and the heavy's step) while standing. walking or running under an upper body swing
             // the legs are the game's walk, and only the hips turn into the cut
@@ -1050,6 +1201,7 @@ namespace Iaido_Katana
 
             for (int i = 0; i < s.Bones.Length; i++) s.Bones[i].localRotation = s.Animated[i];
             s.Hips.localPosition = s.AnimatedHips;
+            ShoulderPlaces(player);
             ReadSettings(Settings);
             if (s.HasSheath)
             {
@@ -1139,6 +1291,51 @@ namespace Iaido_Katana
         }
 
         private static readonly Quaternion[] Pose = new Quaternion[BoneNames.Length];
+
+        private static bool _warnedShoulders;
+        private static bool? _loggedFemale;
+
+        // the game's CharacterAnimEvent sets each collarbone's local x in its late update, every frame (the female
+        // body's narrower shoulders, 3.5 cm in on each side; the male value is the rest), and every animator step puts
+        // the rest back. the arms are solved before that late update, so on the frames the animator ran the hands landed
+        // 3.5 cm off the grip on the female and the blade shook (0.2.2, the user). the collarbones go where the late
+        // update will put them before the arms are solved, so it changes nothing after
+        private static void ShoulderPlaces(Player player)
+        {
+            try
+            {
+                var anim = AnimEventOf(player);
+                if (!anim || !FemaleHack(anim)) return;
+                var vis = AnimEventVis(anim);
+                bool female = vis && vis.GetModelIndex() == 1;
+                float offset = female ? FemaleOffset(anim) : MaleOffset(anim);
+                if (Plugin.LogCounters.Value && player == Player.m_localPlayer && female != _loggedFemale)
+                {
+                    _loggedFemale = female;
+                    Plugin.Log.LogInfo($"iai stance: {(female ? "female" : "male")} body, collarbones placed at the game's x {offset} before the arms are solved");
+                }
+                var left = LeftShoulderOf(anim);
+                var right = RightShoulderOf(anim);
+                if (left)
+                {
+                    var p = left.localPosition;
+                    p.x = -offset;
+                    left.localPosition = p;
+                }
+                if (right)
+                {
+                    var p = right.localPosition;
+                    p.x = offset;
+                    right.localPosition = p;
+                }
+            }
+            catch (System.Exception e)
+            {
+                if (_warnedShoulders) return;
+                _warnedShoulders = true;
+                Plugin.Log.LogWarning("iai stance: the game's shoulder places could not be read, the female stance may shake: " + e.Message);
+            }
+        }
 
         // while the blade slides into its scabbard, the scabbard takes the blade's real place slid back in by how far
         // it is still out. the arm may fall a little short of the sheathing's aim; then blade and scabbard stay one, and

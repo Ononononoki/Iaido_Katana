@@ -1,23 +1,21 @@
 # Iaido Katana
 
-**A katana that wins on the parry. Its own slashes are light, but every perfect parry strikes back on its own.**
+**Two katanas that win on the parry. Every perfect parry draws the blade and strikes back on its own.**
+
+Inspired by real iaido, the art of drawing and cutting in one motion, and by Zenitsu's Thunderclap and Flash from Demon Slayer.
 
 > Please report bugs on [GitHub](https://github.com/Ononononoki/Iaido_Katana/issues).
 
-## What it does
+## Features
 
-- **Steel Katana.** Two-handed, Swords skill, Plains tier. Its own damage is 40% of a Black Metal sword.
-- **Counter.** A perfect parry staggers the attacker and the katana strikes back on its own, harder than a Black Metal sword (1.5 times that at Block 100). The same cut hits every other enemy in a normal swing's reach for double a normal hit, once each, even when several are parried at once. Parried arrows, spears and spells send half of the counter back. The katana barely blocks, so only a perfect parry stops a hit.
-- **Parry timing.** Katanas parry within 200 ms (vanilla 250). An optional precise mode gives 150 ms and counters 15% stronger, each player's own choice.
-- **Custom animations.** Full-body cuts made for the katana: a draw cut out of the scabbard, an overhead cut and a downward diagonal cut, each with a slow windup and a lightning-fast strike on the vanilla beat. The heavy attack draws up into a high stance and cuts straight down for 6 times the damage, from the scabbard or with the blade already out. Set `Swing.CustomAnimations` to false for the older animations borrowed from Krom and Stagbreaker.
-- **Iai stance and scabbard.** In an iai stance the katana rests sheathed at the left hip. A perfect parry draws it and cuts. After fighting it is flicked clean and slowly sheathed. It stays sheathed through a roll, and put away it stays at the hip. Other players see it too.
-- **Impact frame.** A landed counter flashes as a black and white ink picture, with a short freeze, a camera jolt and a metal crash. Only you see it.
-
-## Flametal Katana (Ashlands)
-
-Its own curved Flametal shape, with lightning along the edge.
-
-**Thunderclap.** The heavy attack crouches for 2.25 seconds while lightning gathers, then draws and dashes 13 meters through your enemies. Each one takes 10 times the katana's damage, and nothing hits you during the dash. It costs 100 stamina.
+- **Counter.** A perfect parry staggers the attacker, and the katana draws and strikes back for 3 times its damage. The same cut sweeps 170 degrees around you up to 4 m and hits every other enemy for double damage. Parried projectiles send half of the counter back. The katana barely blocks, so only a perfect parry stops a hit.
+- **Parry window.** 200 ms (vanilla 250), or a precise mode with 150 ms and 15% stronger counters, each player's own choice.
+- **Iai stance.** The katana rests sheathed at the left hip and is drawn by the parry. After fighting it is flicked clean (chiburi) and slowly sheathed (noto).
+- **Iaido cuts.** Full-body animations: a draw cut from the scabbard (nukitsuke), an overhead cut (kirioroshi) and a downward diagonal cut (kesagiri), each with a slow windup and a lightning-fast strike.
+- **Steel heavy attack.** Raised into a high stance (jodan) while a golden glint climbs the blade, then one huge cut straight down for 6 times the damage.
+- **Flametal Thunderclap.** The heavy attack crouches for 2.25 s while lightning gathers in the hands, then dashes 13 m along a 4 m wide path. Every enemy on the way takes 10 times the damage, and nothing hits you during the dash.
+- **Chopping.** The counter's cut, the Steel heavy attack and the Thunderclap fell trees, logs and stumps like an axe.
+- **Effects.** Golden (Steel) or blue-white lightning (Flametal) afterimages of the counter, the heavy attack and the Thunderclap, which other players with the mod see too. A landed counter flashes as an ink picture with a short freeze, only on your screen.
 
 ## Crafting
 
@@ -26,15 +24,14 @@ Its own curved Flametal shape, with lightning along the edge.
 | Steel Katana | 50 Iron, 100 Coal, 20 Fine Wood, 10 Linen Thread | Forge level 4 |
 | Flametal Katana | 50 Flametal, 20 Ashwood, 5 Asksvin Hide, 1 Iolite | Black Forge level 3 |
 
-Upgrades per level: Steel 10 Iron, 20 Coal, 3 Linen Thread. Flametal 10 Flametal, 2 Asksvin Hide (twice that for level 3, four times for level 4).
-
-Both katanas can be refined past level 4 at the Forge of Potential with a Battle Idol (Black Metal for the Steel Katana, Flametal for the Flametal Katana), like the game's own swords.
+Upgrades per level: Steel 10 Iron, 20 Coal, 3 Linen Thread. Flametal 10 Flametal, 2 Asksvin Hide (twice that for level 3, four times for level 4). Both can be refined past level 4 at the Forge of Potential with a Battle Idol, like the game's own swords.
 
 ## Stats
 
 | | Steel Katana | Flametal Katana | Black Metal sword |
 |---|---|---|---|
 | Damage | 38 slash | 60 slash, 15 lightning | 95 slash |
+| Chop | 50, tier 3 | 60, tier 4 | |
 | Block | 10 | 13 | 39 |
 | Parry bonus | 13x | 13x | 2x |
 | Stamina, swing and heavy | 16 and 40 | 20 and 100 | 14 and 28 |
@@ -48,20 +45,18 @@ The file is `BepInEx/config/onononoki.Iaido_Katana.cfg`. Gameplay settings are s
 | `Counter.DamageMultiplier` | 3 | Counter damage on the parried attacker, times the katana's damage |
 | `Counter.AreaHit` | true | The counter's cut also hits the other enemies in reach |
 | `Counter.AreaDamageMultiplier` | 2 | Their damage, times the katana's damage |
+| `Counter.AreaAngle`, `AreaRange` | 170, 4 | Width in degrees and reach in meters of the counter's cut |
 | `Counter.HeavyDamageMultiplier` | 6 | Heavy attack damage, times the katana's damage |
-| `Counter.SwingStamina` | 16 | Stamina of the Steel Katana's swings (`FlametalSwingStamina` 20 for the Flametal one) |
-| `Counter.HeavyStamina` | 40 | Stamina of the Steel Katana's heavy attack (`Thunderclap.Stamina` 100 for the Flametal one) |
+| `Chop.Enabled` | true | The counter, the Steel heavy and the Thunderclap chop trees |
 | `Parry.PreciseMode` | false | Yours. 150 ms window, stronger counters |
-| `Parry.NormalWindowMs` | 200 | Katana parry window outside precise mode |
-| `Thunderclap.Distance` | 13 | Dash length in meters |
-| `Thunderclap.DamageMultiplier` | 10 | Damage to each creature on the way |
+| `Thunderclap.Distance`, `Width` | 13, 2 | Dash length and half its width in meters |
+| `Thunderclap.DamageMultiplier` | 10 | Damage to each enemy on the way |
 | `Stance.*`, `Impact.*`, `Visual.*` | | Yours. Stance, impact frame and effects |
-| `Swing.CustomAnimations` | true | The katana's own animations, false for the older borrowed ones |
-| `Swing.*` | | Swing timing is yours, the swing animations come from the server |
+| `Swing.CustomAnimations` | true | The katana's own animations, false for older ones borrowed from Krom and Stagbreaker |
 
 ## Installation and compatibility
 
-Use a mod manager, or put `Iaido_Katana.dll` into `BepInEx/plugins`. Requires BepInExPack Valheim and Jotunn. For multiplayer, install it on the server and on every player. Only katanas change, and every other weapon, block and parry stays vanilla.
+Use a mod manager, or put `Iaido_Katana.dll` into `BepInEx/plugins`. Requires BepInExPack Valheim and Jotunn. For multiplayer, install it on the server and on every player. Only katanas change, every other weapon, block and parry stays vanilla.
 
 ## Feedback and bug reports
 

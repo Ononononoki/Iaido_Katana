@@ -16,8 +16,9 @@ namespace Iaido_Katana
         internal static readonly Color[] SteelTrail = { new Color(1f, 0.82f, 0.35f, 1f), new Color(1f, 0.6f, 0.15f, 0.6f), new Color(1f, 0.5f, 0.1f, 0f) };
         internal static readonly Color[] FlametalTrail = { new Color(0.85f, 0.95f, 1f, 1f), new Color(0.35f, 0.6f, 1f, 0.7f), new Color(0.2f, 0.35f, 1f, 0f) };
 
-        private const float GlintSeconds = 0.16f;
-        private const float GlintSize = 0.7f;
+        private const float GlintSeconds = 0.3f;
+        private const float GlintSize = 1.4f;
+        private const float GlintLightRange = 8f, GlintLightIntensity = 8f;
         private static Material _glintMaterial;
         private static Mesh _quad;
 
@@ -74,38 +75,314 @@ namespace Iaido_Katana
         }
 
         // a white star at the scabbard mouth with a flash of light, held still for a moment
-        internal static void Glint(Vector3 point)
+        // seconds above 0 sets how long it lasts. returns the star, null when none was made
+        internal static GameObject Glint(Vector3 point, bool gold = false, float seconds = 0f)
         {
-            if (!Plugin.GlintOn.Value || !Plugin.Instance) return;
-            var material = GlintMaterial();
-            if (!material) return;
+            if (!Plugin.GlintOn.Value || !Plugin.Instance) return null;
+            var material = gold ? GoldGlintMaterial() : GlintMaterial();
+            if (!material) return null;
             var star = new GameObject("IaidoKatana_glint", typeof(MeshFilter), typeof(MeshRenderer));
             star.transform.position = point;
             star.GetComponent<MeshFilter>().sharedMesh = Quad();
             star.GetComponent<MeshRenderer>().sharedMaterial = material;
             var light = star.AddComponent<Light>();
             light.type = LightType.Point;
-            light.color = new Color(1f, 0.95f, 0.85f);
-            light.range = 4f;
+            light.color = gold ? GoldLight : new Color(1f, 0.95f, 0.85f);
+            light.range = gold ? GoldGlintRange : GlintLightRange;
             light.intensity = 0f;
-            Plugin.Instance.StartCoroutine(PlayGlint(star, light));
+            float lasts = seconds > 0f ? seconds : gold ? GoldGlintSeconds : GlintSeconds;
+            Plugin.Instance.StartCoroutine(PlayGlint(star, light, lasts, gold ? GoldGlintSize : GlintSize, gold ? GoldGlintLight : GlintLightIntensity));
+            return star;
         }
 
-        private static IEnumerator PlayGlint(GameObject star, Light light)
+        private static IEnumerator PlayGlint(GameObject star, Light light, float seconds, float glintSize, float intensity)
         {
             float start = Time.time;
             while (star)
             {
-                float t = (Time.time - start) / GlintSeconds;
+                float t = (Time.time - start) / seconds;
                 if (t >= 1f) break;
                 var camera = Camera.main;
                 if (camera) star.transform.rotation = camera.transform.rotation * Quaternion.Euler(0f, 0f, 45f * t);
-                float size = Mathf.Sin(Mathf.PI * Mathf.Sqrt(t)) * GlintSize; // up fast, down slower
+                float size = Mathf.Sin(Mathf.PI * Mathf.Sqrt(t)) * glintSize; // up fast, down slower
                 star.transform.localScale = new Vector3(size, size, size);
-                light.intensity = 5f * (1f - t);
+                light.intensity = intensity * (1f - t);
                 yield return null;
             }
             if (star) Object.Destroy(star);
+        }
+
+        // the steel heavy's glint climbing the blade: a small gold star with a light, moved by IaiStance along the blade
+        private static readonly Color GoldLight = new Color(1f, 0.8f, 0.4f);
+        private const float ClimbSize = 0.55f, ClimbLight = 5f, ClimbLightRange = 4f;
+        // the gold shine at the tip is bigger, longer and brighter than the parry's glint
+        private const float GoldGlintSize = 3f, GoldGlintSeconds = 0.45f, GoldGlintLight = 14f, GoldGlintRange = 10f;
+        private static Material _goldGlintMaterial;
+
+        internal static Transform ClimbingGlint()
+        {
+            if (!Plugin.GlintOn.Value) return null;
+            var material = GoldGlintMaterial();
+            if (!material) return null;
+            var star = new GameObject("IaidoKatana_climbingglint", typeof(MeshFilter), typeof(MeshRenderer));
+            star.GetComponent<MeshFilter>().sharedMesh = Quad();
+            star.GetComponent<MeshRenderer>().sharedMaterial = material;
+            star.transform.localScale = Vector3.one * ClimbSize;
+            var light = star.AddComponent<Light>();
+            light.type = LightType.Point;
+            light.color = GoldLight;
+            light.range = ClimbLightRange;
+            light.intensity = ClimbLight;
+            return star.transform;
+        }
+
+        // the climbing glint at a point, facing the camera and twinkling, its size and light scaled by strength (0 to 1)
+        internal static void MoveGlint(Transform star, Vector3 point, float strength = 1f)
+        {
+            if (!star) return;
+            star.position = point;
+            var camera = Camera.main;
+            if (camera) star.rotation = camera.transform.rotation * Quaternion.Euler(0f, 0f, 90f * Time.time);
+            star.localScale = Vector3.one * ClimbSize * strength * (0.85f + 0.15f * Mathf.Sin(Time.time * 40f));
+            var light = star.GetComponent<Light>();
+            if (light) light.intensity = ClimbLight * strength;
+        }
+
+        private static Material GoldGlintMaterial()
+        {
+            if (_goldGlintMaterial) return _goldGlintMaterial;
+            var white = GlintMaterial();
+            if (!white) return null;
+            _goldGlintMaterial = new Material(white) { name = "IaidoKatana_goldglint" };
+            if (_goldGlintMaterial.HasProperty("_TintColor")) _goldGlintMaterial.SetColor("_TintColor", new Color(1f, 0.8f, 0.4f, 1f));
+            return _goldGlintMaterial;
+        }
+
+        // the parry's cut as an afterimage: a wide flat crescent of light around the player at the height of the cut,
+        // as far and as wide as the cut reaches (Counter.AreaRange, AreaAngle). it sweeps in from the left like the draw,
+        // stays bright, then fades slowly. gold for steel, blue white for flametal with a lightning flicker on its edge.
+        // made on every client from the parry's synced timeline, so friends with the mod see it too
+        private const float ArcSweep = 0.06f, ArcHold = 0.25f, ArcFade = 0.9f, ArcHeight = 1.05f, ArcThick = 0.38f;
+        private const int ArcSegments = 48;
+        private static Material _arcMaterial;
+
+        // the steel heavy's afterimage stands upright in front, from over the head down to the ground, as far as the blade
+        private const float HeavyArcRange = 2.4f, HeavyArcAngle = 120f, HeavyArcHeight = 1.4f;
+
+        internal static void SlashArc(Transform body, bool flametal, bool parry = true, bool upright = false)
+        {
+            if ((parry || upright) && !Plugin.AfterimageOn.Value || !Plugin.Instance || !body) return;
+            var material = ArcMaterial();
+            if (!material) return;
+            var ahead = body.forward;
+            ahead.y = 0f;
+            if (ahead.sqrMagnitude < 1e-4f) return;
+            var arc = new GameObject("IaidoKatana_afterimage", typeof(MeshFilter), typeof(MeshRenderer));
+            arc.transform.position = body.position + Vector3.up * (upright ? HeavyArcHeight : ArcHeight);
+            // upright: the crescent turned on its side, so it sweeps in from above and comes down
+            arc.transform.rotation = Quaternion.LookRotation(ahead.normalized, Vector3.up) * (upright ? Quaternion.Euler(0f, 0f, -90f) : Quaternion.identity);
+            var mesh = new Mesh { name = "IaidoKatana_afterimage" };
+            arc.GetComponent<MeshFilter>().sharedMesh = mesh;
+            var renderer = arc.GetComponent<MeshRenderer>();
+            renderer.sharedMaterial = material;
+            renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            renderer.receiveShadows = false;
+            var light = arc.AddComponent<Light>();
+            light.type = LightType.Point;
+            light.color = flametal ? new Color(0.65f, 0.82f, 1f) : new Color(1f, 0.82f, 0.45f);
+            float range = upright ? HeavyArcRange : Plugin.CounterAreaRange.Value;
+            light.range = range * 2.5f;
+            light.intensity = 0f;
+            Plugin.Instance.StartCoroutine(PlayArc(arc, mesh, light, range, upright ? HeavyArcAngle : Plugin.CounterAreaAngle.Value, flametal));
+        }
+
+        private static IEnumerator PlayArc(GameObject arc, Mesh mesh, Light light, float range, float angle, bool flametal)
+        {
+            int n = ArcSegments + 1;
+            var vertices = new Vector3[n * 2];
+            var colours = new Color[n * 2];
+            var triangles = new int[ArcSegments * 12];
+            for (int i = 0, k = 0; i < ArcSegments; i++)
+            {
+                int o = i * 2, p = o + 2;
+                // both faces, so it shows from above and below
+                triangles[k++] = o; triangles[k++] = p; triangles[k++] = o + 1;
+                triangles[k++] = o + 1; triangles[k++] = p; triangles[k++] = p + 1;
+                triangles[k++] = o; triangles[k++] = o + 1; triangles[k++] = p;
+                triangles[k++] = o + 1; triangles[k++] = p + 1; triangles[k++] = p;
+            }
+            var colour = flametal ? FlametalTrail[0] : SteelTrail[0];
+            var deep = flametal ? FlametalTrail[1] : SteelTrail[1];
+            float start = Time.time;
+            bool first = true;
+            while (arc)
+            {
+                float t = Time.time - start;
+                if (t >= ArcSweep + ArcHold + ArcFade) break;
+                float fade = t < ArcSweep + ArcHold ? 1f : 1f - (t - ArcSweep - ArcHold) / ArcFade;
+                fade *= fade;
+                float reveal = Mathf.Clamp01(t / ArcSweep);
+                float heat = Mathf.Clamp01(t / (ArcSweep + ArcHold)); // white hot first, then its colour
+                float grow = 1f + 0.06f * Mathf.Clamp01(t / (ArcSweep + ArcHold + ArcFade));
+                for (int i = 0; i < n; i++)
+                {
+                    float u = i / (float)ArcSegments;                       // 0 at the left end, 1 at the right
+                    float a = (u - 0.5f) * angle * Mathf.Deg2Rad;
+                    float taper = Mathf.Sin(Mathf.PI * u);                   // thick in the middle, a point at both ends
+                    float outer = range * grow;
+                    if (flametal) outer += Random.Range(-0.05f, 0.05f) * range * taper; // a lightning edge
+                    float inner = outer - range * ArcThick * taper;
+                    var dir = new Vector3(Mathf.Sin(a), 0f, Mathf.Cos(a));
+                    vertices[i * 2] = dir * outer;
+                    vertices[i * 2 + 1] = dir * inner;
+                    float shown = Mathf.Clamp01((reveal * 1.15f - u) / 0.15f); // swept in from the left
+                    float flicker = flametal ? Random.Range(0.75f, 1f) : 1f;
+                    var edge = Color.Lerp(Color.white, colour, heat);
+                    var core = Color.Lerp(colour, deep, heat);
+                    edge.a = fade * shown * Mathf.Sqrt(taper) * flicker;
+                    core.a = 0f; // the inner edge fades out into the air
+                    colours[i * 2] = edge;
+                    colours[i * 2 + 1] = core;
+                }
+                mesh.vertices = vertices;
+                mesh.colors = colours;
+                if (first)
+                {
+                    mesh.triangles = triangles;
+                    first = false;
+                }
+                mesh.RecalculateBounds();
+                light.intensity = 6f * fade * (flametal ? Random.Range(0.7f, 1f) : 1f);
+                yield return null;
+            }
+            if (arc) Object.Destroy(arc);
+            Object.Destroy(mesh);
+        }
+
+        // the thunderclap's cut as an afterimage along the whole dash: a long streak of blue white light at the cut's height
+        // from where the dash began to a little past where it ended, turned to face the camera, faint and thin at the start
+        // and widest and brightest at the player, bright along its middle line and fading to its edges, swept in from the
+        // start, with a lightning flicker
+        private const float PathHeight = 0.8f, PathWidth = 1.6f, PathPast = 1f, PathFaint = 0.15f;
+        private const int PathSegments = 40;
+
+        internal static void SlashPath(Vector3 from, Vector3 to)
+        {
+            if (!Plugin.Instance) return;
+            var material = ArcMaterial();
+            var along = to - from;
+            along.y = 0f;
+            if (!material || along.sqrMagnitude < 0.25f) return;
+            float length = along.magnitude + PathPast;
+            var path = new GameObject("IaidoKatana_thunderpath", typeof(MeshFilter), typeof(MeshRenderer));
+            path.transform.position = from + Vector3.up * PathHeight;
+            path.transform.rotation = Quaternion.LookRotation(along.normalized, Vector3.up);
+            var mesh = new Mesh { name = "IaidoKatana_thunderpath" };
+            path.GetComponent<MeshFilter>().sharedMesh = mesh;
+            var renderer = path.GetComponent<MeshRenderer>();
+            renderer.sharedMaterial = material;
+            renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            renderer.receiveShadows = false;
+            var light = new GameObject("IaidoKatana_thunderpath_light").AddComponent<Light>();
+            light.transform.SetParent(path.transform, false);
+            light.transform.localPosition = new Vector3(0f, 0f, length - PathPast); // at the player, where it is brightest
+            light.type = LightType.Point;
+            light.color = new Color(0.65f, 0.82f, 1f);
+            light.range = Mathf.Max(6f, length * 0.6f);
+            light.intensity = 0f;
+            Plugin.Instance.StartCoroutine(PlayPath(path, mesh, light, length, along.normalized));
+        }
+
+        private static IEnumerator PlayPath(GameObject path, Mesh mesh, Light light, float length, Vector3 along)
+        {
+            int n = PathSegments + 1;
+            var vertices = new Vector3[n * 3];
+            var colours = new Color[n * 3];
+            var triangles = new int[PathSegments * 24];
+            for (int i = 0, k = 0; i < PathSegments; i++)
+            {
+                int o = i * 3, p = o + 3;
+                // two strips (left edge to the middle, the middle to the right edge), both faces
+                foreach (int s in new[] { 0, 1 })
+                {
+                    int a = o + s, b = o + s + 1, c = p + s, d = p + s + 1;
+                    triangles[k++] = a; triangles[k++] = c; triangles[k++] = b;
+                    triangles[k++] = b; triangles[k++] = c; triangles[k++] = d;
+                    triangles[k++] = a; triangles[k++] = b; triangles[k++] = c;
+                    triangles[k++] = b; triangles[k++] = d; triangles[k++] = c;
+                }
+            }
+            var colour = FlametalTrail[0];
+            var deep = FlametalTrail[1];
+            float start = Time.time;
+            bool first = true;
+            while (path)
+            {
+                float t = Time.time - start;
+                if (t >= ArcSweep + ArcHold + ArcFade) break;
+                float fade = t < ArcSweep + ArcHold ? 1f : 1f - (t - ArcSweep - ArcHold) / ArcFade;
+                fade *= fade;
+                float reveal = Mathf.Clamp01(t / ArcSweep);
+                float heat = Mathf.Clamp01(t / (ArcSweep + ArcHold));
+                // the streak turns about its own line to face the camera, so it never shows edge on
+                var camera = Camera.main;
+                if (camera)
+                {
+                    var toCamera = camera.transform.position - (path.transform.position + along * length * 0.5f);
+                    var face = toCamera - along * Vector3.Dot(toCamera, along);
+                    if (face.sqrMagnitude > 1e-6f) path.transform.rotation = Quaternion.LookRotation(along, face.normalized);
+                }
+                float atPlayer = Mathf.Clamp01((length - PathPast) / length); // where the player stands along it
+                for (int i = 0; i < n; i++)
+                {
+                    float u = i / (float)PathSegments;
+                    // from a faint point at the start it grows to its widest and brightest at the player, then a short point
+                    float rise = atPlayer > 0f ? Mathf.Clamp01(u / atPlayer) : 1f;
+                    float taper = u <= atPlayer ? Mathf.Pow(rise, 0.8f) : Mathf.Sin(Mathf.PI * 0.5f * (1f - u) / Mathf.Max(1e-3f, 1f - atPlayer));
+                    float strength = PathFaint + (1f - PathFaint) * rise;
+                    float half = PathWidth * 0.5f * taper * (1f + Random.Range(-0.15f, 0.15f));
+                    float z = u * length;
+                    float wobble = Random.Range(-0.03f, 0.03f) * taper; // a lightning edge
+                    vertices[i * 3] = new Vector3(-half, wobble, z);
+                    vertices[i * 3 + 1] = new Vector3(0f, wobble, z);
+                    vertices[i * 3 + 2] = new Vector3(half, wobble, z);
+                    float shown = Mathf.Clamp01((reveal * 1.15f - u) / 0.15f);
+                    var middle = Color.Lerp(Color.white, colour, heat);
+                    middle.a = fade * shown * strength * Mathf.Sqrt(taper) * Random.Range(0.75f, 1f);
+                    var edge = Color.Lerp(colour, deep, heat);
+                    edge.a = 0f;
+                    colours[i * 3] = edge;
+                    colours[i * 3 + 1] = middle;
+                    colours[i * 3 + 2] = edge;
+                }
+                mesh.vertices = vertices;
+                mesh.colors = colours;
+                if (first)
+                {
+                    mesh.triangles = triangles;
+                    first = false;
+                }
+                mesh.RecalculateBounds();
+                light.intensity = 6f * fade * Random.Range(0.7f, 1f);
+                yield return null;
+            }
+            if (path) Object.Destroy(path);
+            Object.Destroy(mesh);
+        }
+
+        // the trail's own additive material, plain, so the arc's vertex colours draw it
+        private static Material ArcMaterial()
+        {
+            if (_arcMaterial) return _arcMaterial;
+            var template = TrailMaterialOf("THSwordKrom");
+            if (!template)
+            {
+                Plugin.Log.LogWarning("parry afterimage: the trail material was not found, no afterimage");
+                return null;
+            }
+            _arcMaterial = new Material(template) { name = "IaidoKatana_afterimage", mainTexture = Texture2D.whiteTexture };
+            if (_arcMaterial.HasProperty("_TintColor")) _arcMaterial.SetColor("_TintColor", new Color(0.6f, 0.58f, 0.55f, 0.5f));
+            return _arcMaterial;
         }
 
         // a full-body cut's whoosh as its strike begins, heard around the player: a sword's swing played quick and high,
@@ -262,9 +539,73 @@ namespace Iaido_Katana
             _quad = new Mesh { name = "IaidoKatana_quad" };
             _quad.vertices = new[] { new Vector3(-0.5f, -0.5f, 0f), new Vector3(0.5f, -0.5f, 0f), new Vector3(0.5f, 0.5f, 0f), new Vector3(-0.5f, 0.5f, 0f) };
             _quad.uv = new[] { new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(1f, 1f), new Vector2(0f, 1f) };
+            _quad.colors = new[] { Color.white, Color.white, Color.white, Color.white }; // the trail shader multiplies by them
             _quad.triangles = new[] { 0, 2, 1, 0, 3, 2 };
             _quad.RecalculateBounds();
             return _quad;
+        }
+
+        // the thunderclap's charge: a soft blue white ball of light under the given parent, facing the camera (its size and
+        // turn set by ThunderCharge)
+        private static Material _ballMaterial;
+
+        internal static Transform ChargeGlow(Transform parent)
+        {
+            if (!_ballMaterial)
+            {
+                var template = TrailMaterialOf("THSwordKrom");
+                if (!template)
+                {
+                    Plugin.Log.LogWarning("thunderclap charge: the trail material was not found, no glow");
+                    return null;
+                }
+                _ballMaterial = new Material(template) { name = "IaidoKatana_chargeball", mainTexture = BallTexture() };
+                if (_ballMaterial.HasProperty("_TintColor")) _ballMaterial.SetColor("_TintColor", new Color(0.5f, 0.75f, 1f, 1f));
+            }
+            var ball = new GameObject("IaidoKatana_chargeball", typeof(MeshFilter), typeof(MeshRenderer));
+            ball.transform.SetParent(parent, false);
+            ball.GetComponent<MeshFilter>().sharedMesh = Quad();
+            var renderer = ball.GetComponent<MeshRenderer>();
+            renderer.sharedMaterial = _ballMaterial;
+            renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            renderer.receiveShadows = false;
+            ball.transform.localScale = Vector3.zero;
+            return ball.transform;
+        }
+
+        // the slayer lightning's arcs crawling over the ball, their rate set by ThunderCharge
+        internal static ParticleSystem ChargeArcs(Transform parent)
+        {
+            var ps = LightningCopy(parent, "IaidoKatana_chargearcs", Vector3.zero, "thunderclap charge");
+            if (!ps) return null;
+            var main = ps.main;
+            main.simulationSpace = ParticleSystemSimulationSpace.World; // the arcs stay where they flash as the hands move
+            var shape = ps.shape;
+            shape.shapeType = ParticleSystemShapeType.Sphere;
+            shape.radius = 0.05f;
+            var emission = ps.emission;
+            emission.rateOverTime = 0f;
+            ps.Play();
+            return ps;
+        }
+
+        private static Texture2D BallTexture()
+        {
+            const int size = 64;
+            var texture = new Texture2D(size, size, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, name = "IaidoKatana_ball" };
+            var pixels = new Color32[size * size];
+            for (int y = 0; y < size; y++)
+                for (int x = 0; x < size; x++)
+                {
+                    float u = (x + 0.5f) / size * 2f - 1f, v = (y + 0.5f) / size * 2f - 1f;
+                    float r = Mathf.Sqrt(u * u + v * v);
+                    float core = Mathf.Exp(-r * r * 14f) + 0.45f * Mathf.Exp(-r * r * 3f); // a bright core in a soft halo
+                    byte a = (byte)(255f * Mathf.Clamp01(core * Mathf.Clamp01((1f - r) * 5f)));
+                    pixels[y * size + x] = new Color32(a, a, a, a);
+                }
+            texture.SetPixels32(pixels);
+            texture.Apply(false, true);
+            return texture;
         }
 
         // the slayer lightning's crackle, made small and short, at a point under the given parent. off until enabled

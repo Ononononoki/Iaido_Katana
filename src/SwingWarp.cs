@@ -53,6 +53,10 @@ namespace Iaido_Katana
 
         internal static bool Active => _active && !_hitDone;
 
+        // the animation time where the heavy's slow raise ends and its fast strike begins (both heavy clips reach the
+        // hit at the same time)
+        internal static float HeavyRaiseEnd => HitTimes["greatsword_secondary"] * Plugin.WindupShare.Value;
+
         // pace speeds up the whole way to the hit, strikeBoost only the strike (the windup slows down to match).
         // total above 0 sets the length of the whole swing instead, by changing only the raise
         internal static void Begin(string key, float pace, float strikeBoost, float total)

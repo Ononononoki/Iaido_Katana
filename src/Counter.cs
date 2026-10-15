@@ -31,6 +31,7 @@ namespace Iaido_Katana
         // when each enemy last took a hit of the counters: one per enemy within CutAgain seconds
         private static readonly Dictionary<Character, float> CutAt = new Dictionary<Character, float>();
         private const float CutAgain = 0.15f;
+        internal const float AreaHeight = 3f; // the counter's cut reaches this far up and down from the player's middle
         private const float GatherFor = 1f; // a counter still waiting this long after its parry is stale
 
         // true from the parry until the counter swing has fully played out, recovery included
@@ -189,7 +190,7 @@ namespace Iaido_Katana
         }
 
         // 0.2.1 (the user: the counter was weak in hordes): the counter's cut also takes every other enemy within a
-        // normal swing toward the parried attacker, each with a full hit of AreaDamageMultiplier (no share between
+        // wide swing (AreaAngle) toward the parried attacker, each with a full hit of AreaDamageMultiplier (no share between
         // targets, like the katana's own swings). an enemy cut by a counter in the last CutAgain seconds is left out,
         // so parries close together never add their cuts up on one enemy
         private static void CutAround(Player player, Character attacker, ItemDrop.ItemData weapon)
@@ -203,7 +204,7 @@ namespace Iaido_Katana
             {
                 if (!who || who == player || who.IsDead() || CutAt.ContainsKey(who) || !Thunderclap.Enemy(player, who)) continue;
                 var point = who.GetCenterPoint();
-                if (!Katana.InSwing(point - from, ahead, who.GetRadius(), Plugin.NormalRange.Value, Plugin.NormalAngle.Value)) continue;
+                if (!Katana.InSwing(point - from, ahead, who.GetRadius(), Plugin.CounterAreaRange.Value, Plugin.CounterAreaAngle.Value, AreaHeight)) continue;
                 if (Physics.Linecast(from, point, Thunderclap.Walls)) continue; // not through walls and rocks
 
                 var hit = Hit(player, who, weapon, Plugin.CounterAreaMultiplier.Value * player.GetRandomSkillFactor(Skills.SkillType.Swords));
@@ -214,6 +215,10 @@ namespace Iaido_Katana
                 if (Plugin.LogCounters.Value)
                     Plugin.Log.LogInfo($"counter cut on {who.m_name}: {hit.m_damage.GetTotalDamage():0} before resistances ({Vector3.Distance(from, point):0.0} m away)");
             }
+            if (!Chop.On(weapon)) return;
+            int chopped = Chop.CutAround(player, weapon, from, ahead, Plugin.CounterAreaRange.Value, Plugin.CounterAreaAngle.Value, AreaHeight);
+            if (Plugin.LogCounters.Value)
+                Plugin.Log.LogInfo($"counter chop: {chopped} trees, logs or stumps (chop {Chop.Damage(weapon):0}, tier {Chop.Tier(weapon)}, {Plugin.CounterAreaAngle.Value:0} degrees, {Plugin.CounterAreaRange.Value:0.#} m)");
         }
     }
 }
