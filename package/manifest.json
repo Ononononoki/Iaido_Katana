@@ -1,6 +1,6 @@
 {
     "name":  "Iaido_Katana",
-    "version_number":  "0.3.0",
+    "version_number":  "0.3.1",
     "website_url":  "https://github.com/Ononononoki/Iaido_Katana",
     "description":  "Two katanas built around the perfect parry, which draws and strikes back on its own. Iaido-inspired cuts, an iai stance with a scabbard, tree chopping and a Zenitsu-style Thunderclap dash.",
     "dependencies":  [

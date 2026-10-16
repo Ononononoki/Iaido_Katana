@@ -1,37 +1,45 @@
 # Changelog
 
+## 0.3.1
+
+- A katana parry never staggers you anymore. Running out of stamina still breaks it. New setting `Parry.NoStagger`.
+- A new parry sound made from Valheim's own metal sounds and inspired by Sekiro's deflects, with six variations that change with every parry. New setting `Impact.ParrySoundVolume`.
+- Your own parry sounds. Put .wav files (16 bit) in `BepInEx/config/Iaido_Katana/ParrySounds` and each parry plays one at random.
+- The Steel Katana's heavy attack lights up its surroundings much less, and hits leave only a small glint.
+- The Thunderclap's streak is brighter and stays longer, and its cut also reaches enemies just past where the dash ends. `Thunderclap.Afterimage` can add an arc of light there.
+- A much shorter config file with the settings that matter in play. Settings that an update changes now move only once, so your own values stay.
+
 ## 0.3.0
 
-- The counter's cut sweeps wider and further (170 degrees, 4 m, was 110 degrees and 3 m) and leaves a golden (Steel) or blue-white lightning (Flametal) afterimage that other players with the mod see too. The parry glint now shows and is bigger.
-- Chopping: the counter's cut, the Steel Katana's heavy attack and the Thunderclap fell trees, logs and stumps like an axe. New `Chop.*` settings.
-- The katana's own cuts hit along each blade's path, and every swing hits all enemies in reach at full damage.
-- Steel Katana heavy attack: hits from high down to the feet, a golden glint climbs the blade with a rising ring and shines at the tip, a deeper swing sound and an upright golden afterimage.
-- Thunderclap: a charge-up sound and a ball of lightning in the hands while gathering, a streak of light along the dash (`Thunderclap.Afterimage`), a 4 m wide path (was 2 m) that cuts through trees, no crash sound during the dash.
-- Fixed the blade shaking on female characters while standing, walking, running and blocking.
+- The counter's cut sweeps wider and further and leaves a golden (Steel) or blue-white lightning (Flametal) afterimage that other players with the mod see too. A bigger parry glint.
+- The counter's cut, the Steel Katana's heavy attack and the Thunderclap fell trees, logs and stumps like an axe.
+- The katana's own cuts hit along the blade's path, and every swing hits all enemies in reach.
+- The Steel Katana's heavy attack hits from high down to the feet, with a golden glint climbing the blade, a deeper swing sound and an upright golden afterimage.
+- The Thunderclap gets a charge-up sound and a ball of lightning while gathering, a streak of light along the dash and a wider path that cuts through trees.
+- Fixed the blade shaking on female characters.
 - Works with Valheim 1.0.20.
 
 ## 0.2.2
 
-- Lighter stamina: the Steel Katana's swings cost 16 (was 20) and its heavy attack 40 (was 50), the Flametal Katana's swings 20 (was 24). The Thunderclap stays at 100. Config files still at the old values move to the new ones. New setting `Counter.SwingStamina` for the Steel Katana's swings.
-- The counter's area cut can hit the same enemy again after 0.15 s (was 0.25 s), so parries in quick succession land more cuts.
-- Smoother animations: no more small pops in the draw cut's follow-through, no elbow wobble as the third cut strikes, and the draw cut and the heavy attack no longer flick the blade out of the scabbard for a moment as they start. The overhead cut keeps the left arm bent through its strike and lands with the hands further out in front and the blade level.
-- Steadier stance: the chest stays square to where you face while standing, walking and blocking, so the elbows stay closer to the body and the block no longer looks folded. `Stance.SpineHold` and `ShoulderHold` now default to 1 (old configs at 0.8 move up). The left shoulder sits a little higher, which keeps the left elbow nearer the body. Starting or ending a block and stopping the sheathing early no longer snap.
-- The scabbard hangs a little further out to the left, so it no longer cuts into the left thigh while walking. A `Stance.BladeYaw` still at the old default moves to the new one.
-- New setting `Debug.RecordPoses` (off): writes your pose to `BepInEx/IaidoPoses` while a katana is in your hand, for tuning the animations.
+- Lighter stamina costs for the swings and the Steel Katana's heavy attack.
+- The counter's area cut can hit the same enemy again sooner, so quick parries land more cuts.
+- Smoother animations with fewer pops and wobbles. The draw cut and the heavy attack no longer flick the blade out of the scabbard as they start.
+- A steadier stance. The chest stays square while standing, walking and blocking, and starting or ending a block no longer snaps.
+- The scabbard no longer cuts into the left thigh while walking.
 
 ## 0.2.1
 
-- The counter hits harder (3 times the katana's damage, was 2.5) and its cut also hits every other enemy in reach for double a normal hit, once each.
-- Steadier stance: the body no longer swings from side to side when blocking while moving left and right, less shoulder wobble while running.
-- Smoother animations: in the third cut the left elbow stays out to the side, no more jiggle or bending in toward the body, smooth hand-overs between the cuts and the stance, and putting the katana away and taking it out again no longer snap.
+- The counter hits harder, and its cut also hits every other enemy in reach.
+- A steadier stance with less sway when blocking while moving sideways and less shoulder wobble while running.
+- Smoother animations and hand-overs between the cuts and the stance.
 
 ## 0.2.0
 
-- Custom full-body animations: a draw cut out of the scabbard, an overhead cut and a downward diagonal cut, each with a slow windup and a lightning-fast strike.
-- New heavy attack: drawn up into a high stance, charged, then a huge cut straight down with a long lunge. It has its own version when the blade is already out.
+- Custom full-body animations. A draw cut from the scabbard, an overhead cut and a downward diagonal cut, each with a slow windup and a lightning-fast strike.
+- A new heavy attack, drawn up into a high stance and then one huge cut straight down.
 - Smoother sheathing after two-handed cuts.
 - Greatswords and sledges keep their own animations.
-- `Swing.CustomAnimations` false brings back the older animations borrowed from Krom and Stagbreaker.
+- `Swing.CustomAnimations` false brings back the older borrowed animations.
 
 ## 0.1.2 (beta)
 
@@ -44,7 +52,6 @@
 
 - Natural arm poses in the stance, the parry, the sheathing and the Thunderclap.
 - The katana stays sheathed through a roll.
-- New setting `Stance.SpineHold`. Old default stance settings update on their own.
 - GitHub link for feedback and bug reports.
 
 ## 0.1.0 (beta)

@@ -9,11 +9,11 @@ Inspired by real iaido, the art of drawing and cutting in one motion, and by Zen
 ## Features
 
 - **Counter.** A perfect parry staggers the attacker, and the katana draws and strikes back for 3 times its damage. The same cut sweeps 170 degrees around you up to 4 m and hits every other enemy for double damage. Parried projectiles send half of the counter back. The katana barely blocks, so only a perfect parry stops a hit.
-- **Parry window.** 200 ms (vanilla 250), or a precise mode with 150 ms and 15% stronger counters, each player's own choice.
+- **Parry window.** 200 ms (vanilla 250), or a precise mode with 150 ms and 15% stronger counters, each player's own choice. A katana parry never staggers you.
 - **Iai stance.** The katana rests sheathed at the left hip and is drawn by the parry. After fighting it is flicked clean (chiburi) and slowly sheathed (noto).
 - **Iaido cuts.** Full-body animations: a draw cut from the scabbard (nukitsuke), an overhead cut (kirioroshi) and a downward diagonal cut (kesagiri), each with a slow windup and a lightning-fast strike.
 - **Steel heavy attack.** Raised into a high stance (jodan) while a golden glint climbs the blade, then one huge cut straight down for 6 times the damage.
-- **Flametal Thunderclap.** The heavy attack crouches for 2.25 s while lightning gathers in the hands, then dashes 13 m along a 4 m wide path. Every enemy on the way takes 10 times the damage, and nothing hits you during the dash.
+- **Flametal Thunderclap.** The heavy attack crouches for 2.25 s while lightning gathers in the hands, then dashes 13 m along a 4 m wide path. Every enemy on the way, and just in front of where the dash ends, takes 10 times the damage, and nothing hits you during the dash.
 - **Chopping.** The counter's cut, the Steel heavy attack and the Thunderclap fell trees, logs and stumps like an axe.
 - **Effects.** Golden (Steel) or blue-white lightning (Flametal) afterimages of the counter, the heavy attack and the Thunderclap, which other players with the mod see too. A landed counter flashes as an ink picture with a short freeze, only on your screen.
 
@@ -49,9 +49,13 @@ The file is `BepInEx/config/onononoki.Iaido_Katana.cfg`. Gameplay settings are s
 | `Counter.HeavyDamageMultiplier` | 6 | Heavy attack damage, times the katana's damage |
 | `Chop.Enabled` | true | The counter, the Steel heavy and the Thunderclap chop trees |
 | `Parry.PreciseMode` | false | Yours. 150 ms window, stronger counters |
+| `Parry.NoStagger` | true | A katana parry never staggers you |
+| `Impact.ParrySoundVolume` | 1 | Yours. Volume of the parry sound, 0 turns it off |
+| `Impact.OwnParrySounds` | true | Yours. Your own .wav files in `BepInEx/config/Iaido_Katana/ParrySounds` play on a parry, one at random |
 | `Thunderclap.Distance`, `Width` | 13, 2 | Dash length and half its width in meters |
 | `Thunderclap.DamageMultiplier` | 10 | Damage to each enemy on the way |
-| `Stance.*`, `Impact.*`, `Visual.*` | | Yours. Stance, impact frame and effects |
+| `Thunderclap.Afterimage` | Path | Yours. What the dash leaves behind, Path (a streak along it), Arc (an arc in front of its end), Both or Off |
+| `Stance.Enabled`, `Impact.*`, `Visual.*` | | Yours. The stance, the impact frame and the effects |
 | `Swing.CustomAnimations` | true | The katana's own animations, false for older ones borrowed from Krom and Stagbreaker |
 
 ## Installation and compatibility

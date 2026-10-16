@@ -112,11 +112,13 @@ namespace Iaido_Katana
             if (star) Object.Destroy(star);
         }
 
-        // the steel heavy's glint climbing the blade: a small gold star with a light, moved by IaiStance along the blade
-        private static readonly Color GoldLight = new Color(1f, 0.8f, 0.4f);
-        private const float ClimbSize = 0.55f, ClimbLight = 5f, ClimbLightRange = 4f;
-        // the gold shine at the tip is bigger, longer and brighter than the parry's glint
-        private const float GoldGlintSize = 3f, GoldGlintSeconds = 0.45f, GoldGlintLight = 14f, GoldGlintRange = 10f;
+        // the steel heavy's glint climbing the blade: a small pale gold star with a light, moved by IaiStance along the blade.
+        // its lights stay low so the heavy does not light up dark places
+        private static readonly Color GoldLight = new Color(1f, 0.88f, 0.62f);
+        private const float ClimbSize = 0.55f, ClimbLight = 2.5f, ClimbLightRange = 3f;
+        // the gold shine at the tip is bigger and longer than the parry's glint
+        private const float GoldGlintSize = 2.4f, GoldGlintSeconds = 0.45f, GoldGlintLight = 6f, GoldGlintRange = 6f;
+        private static readonly Color GoldGlintTint = new Color(1f, 0.88f, 0.62f, 0.65f);
         private static Material _goldGlintMaterial;
 
         internal static Transform ClimbingGlint()
@@ -154,7 +156,7 @@ namespace Iaido_Katana
             var white = GlintMaterial();
             if (!white) return null;
             _goldGlintMaterial = new Material(white) { name = "IaidoKatana_goldglint" };
-            if (_goldGlintMaterial.HasProperty("_TintColor")) _goldGlintMaterial.SetColor("_TintColor", new Color(1f, 0.8f, 0.4f, 1f));
+            if (_goldGlintMaterial.HasProperty("_TintColor")) _goldGlintMaterial.SetColor("_TintColor", GoldGlintTint);
             return _goldGlintMaterial;
         }
 
@@ -168,6 +170,9 @@ namespace Iaido_Katana
 
         // the steel heavy's afterimage stands upright in front, from over the head down to the ground, as far as the blade
         private const float HeavyArcRange = 2.4f, HeavyArcAngle = 120f, HeavyArcHeight = 1.4f;
+        // the parry arc lights 2.5 times its reach around it, the heavy's arc a quarter as bright and only about 3 m,
+        // so the heavy does not flood the ground with light
+        private const float ArcLight = 6f, ArcLightReach = 2.5f, HeavyArcLight = 1.5f, HeavyArcLightRange = 3f;
 
         internal static void SlashArc(Transform body, bool flametal, bool parry = true, bool upright = false)
         {
@@ -191,12 +196,13 @@ namespace Iaido_Katana
             light.type = LightType.Point;
             light.color = flametal ? new Color(0.65f, 0.82f, 1f) : new Color(1f, 0.82f, 0.45f);
             float range = upright ? HeavyArcRange : Plugin.CounterAreaRange.Value;
-            light.range = range * 2.5f;
+            light.range = upright ? HeavyArcLightRange : range * ArcLightReach;
             light.intensity = 0f;
-            Plugin.Instance.StartCoroutine(PlayArc(arc, mesh, light, range, upright ? HeavyArcAngle : Plugin.CounterAreaAngle.Value, flametal));
+            Plugin.Instance.StartCoroutine(PlayArc(arc, mesh, light, range, upright ? HeavyArcAngle : Plugin.CounterAreaAngle.Value, flametal,
+                upright ? HeavyArcLight : ArcLight));
         }
 
-        private static IEnumerator PlayArc(GameObject arc, Mesh mesh, Light light, float range, float angle, bool flametal)
+        private static IEnumerator PlayArc(GameObject arc, Mesh mesh, Light light, float range, float angle, bool flametal, float peakLight)
         {
             int n = ArcSegments + 1;
             var vertices = new Vector3[n * 2];
@@ -252,7 +258,7 @@ namespace Iaido_Katana
                     first = false;
                 }
                 mesh.RecalculateBounds();
-                light.intensity = 6f * fade * (flametal ? Random.Range(0.7f, 1f) : 1f);
+                light.intensity = peakLight * fade * (flametal ? Random.Range(0.7f, 1f) : 1f);
                 yield return null;
             }
             if (arc) Object.Destroy(arc);
@@ -263,13 +269,16 @@ namespace Iaido_Katana
         // from where the dash began to a little past where it ended, turned to face the camera, faint and thin at the start
         // and widest and brightest at the player, bright along its middle line and fading to its edges, swept in from the
         // start, with a lightning flicker
-        private const float PathHeight = 0.8f, PathWidth = 1.6f, PathPast = 1f, PathFaint = 0.15f;
+        // it stays longer and draws brighter than the parry's arc so the whole dash can be seen
+        private const float PathHeight = 0.8f, PathWidth = 2f, PathPast = 1f, PathFaint = 0.3f, PathHold = 0.6f, PathFade = 1.6f, PathLight = 7f;
+        private static readonly Color PathTint = new Color(0.6f, 0.62f, 0.66f, 0.85f);
         private const int PathSegments = 40;
+        private static Material _pathMaterial;
 
         internal static void SlashPath(Vector3 from, Vector3 to)
         {
             if (!Plugin.Instance) return;
-            var material = ArcMaterial();
+            var material = PathMaterial();
             var along = to - from;
             along.y = 0f;
             if (!material || along.sqrMagnitude < 0.25f) return;
@@ -319,11 +328,11 @@ namespace Iaido_Katana
             while (path)
             {
                 float t = Time.time - start;
-                if (t >= ArcSweep + ArcHold + ArcFade) break;
-                float fade = t < ArcSweep + ArcHold ? 1f : 1f - (t - ArcSweep - ArcHold) / ArcFade;
+                if (t >= ArcSweep + PathHold + PathFade) break;
+                float fade = t < ArcSweep + PathHold ? 1f : 1f - (t - ArcSweep - PathHold) / PathFade;
                 fade *= fade;
                 float reveal = Mathf.Clamp01(t / ArcSweep);
-                float heat = Mathf.Clamp01(t / (ArcSweep + ArcHold));
+                float heat = Mathf.Clamp01(t / (ArcSweep + PathHold));
                 // the streak turns about its own line to face the camera, so it never shows edge on
                 var camera = Camera.main;
                 if (camera)
@@ -363,11 +372,22 @@ namespace Iaido_Katana
                     first = false;
                 }
                 mesh.RecalculateBounds();
-                light.intensity = 6f * fade * Random.Range(0.7f, 1f);
+                light.intensity = PathLight * fade * Random.Range(0.7f, 1f);
                 yield return null;
             }
             if (path) Object.Destroy(path);
             Object.Destroy(mesh);
+        }
+
+        // the arc's plain additive material with a stronger tint, for the thunderclap's streak
+        private static Material PathMaterial()
+        {
+            if (_pathMaterial) return _pathMaterial;
+            var arc = ArcMaterial();
+            if (!arc) return null;
+            _pathMaterial = new Material(arc) { name = "IaidoKatana_thunderpath" };
+            if (_pathMaterial.HasProperty("_TintColor")) _pathMaterial.SetColor("_TintColor", PathTint);
+            return _pathMaterial;
         }
 
         // the trail's own additive material, plain, so the arc's vertex colours draw it
@@ -399,8 +419,12 @@ namespace Iaido_Katana
 
         // where a full-body cut lands, on the hitting player's own screen: a thin straight line of light along the cut
         // through the blade, held bright for a moment and then fading slowly (the inspiration clip's golden slash), a
-        // flash of light and a small camera jolt
+        // tiny flash of light and a small camera jolt
         private const float MarkHold = 0.12f, MarkFade = 0.6f, MarkGrow = 0.04f, MarkLength = 2.6f, MarkWidth = 0.07f;
+        // the flash at the hit is a small glint that lights only about two metres around it, golden white for steel and
+        // blue white for flametal, so hits do not light up dark places. the steel line itself is a little fainter
+        private const float MarkLight = 1.2f, MarkRange = 2f, SteelMarkAlpha = 0.75f;
+        private static readonly Color SteelMarkGlow = new Color(1f, 0.92f, 0.75f), FlametalMarkGlow = new Color(0.75f, 0.88f, 1f);
         private static Material _markMaterial;
 
         internal static void SlashMark(Vector3 point, Vector3 along, bool flametal)
@@ -422,16 +446,16 @@ namespace Iaido_Katana
             renderer.receiveShadows = false;
             var light = mark.AddComponent<Light>();
             light.type = LightType.Point;
-            light.color = flametal ? new Color(0.7f, 0.85f, 1f) : new Color(1f, 0.85f, 0.55f);
-            light.range = 5f;
+            light.color = flametal ? FlametalMarkGlow : SteelMarkGlow;
+            light.range = MarkRange;
             light.intensity = 0f;
             var colour = flametal ? FlametalTrail[0] : SteelTrail[0];
-            Plugin.Instance.StartCoroutine(PlayMark(mark, mesh, light, along.normalized, colour));
+            Plugin.Instance.StartCoroutine(PlayMark(mark, mesh, light, along.normalized, colour, MarkLight, flametal ? 1f : SteelMarkAlpha));
             var camera = GameCamera.instance;
             if (camera && Plugin.SlashShake.Value > 0f) camera.AddShake(camera.transform.position, 20f, Plugin.SlashShake.Value, false);
         }
 
-        private static IEnumerator PlayMark(GameObject mark, Mesh mesh, Light light, Vector3 along, Color colour)
+        private static IEnumerator PlayMark(GameObject mark, Mesh mesh, Light light, Vector3 along, Color colour, float peakLight, float alpha)
         {
             float start = Time.time;
             var colours = new Color[4];
@@ -452,10 +476,10 @@ namespace Iaido_Katana
                 fade *= fade;
                 mark.transform.localScale = new Vector3(MarkWidth * (1f + 0.5f * (1f - fade)), MarkLength * (0.4f + 0.6f * grow), 1f);
                 var c = Color.Lerp(new Color(1f, 1f, 1f, 1f), colour, Mathf.Clamp01(t / MarkHold)); // white hot first
-                c.a = fade;
+                c.a = fade * alpha;
                 for (int i = 0; i < 4; i++) colours[i] = c;
                 mesh.colors = colours;
-                light.intensity = 4f * fade * (t < MarkHold ? 1f : 0.5f);
+                if (light) light.intensity = peakLight * fade * (t < MarkHold ? 1f : 0.5f);
                 yield return null;
             }
             if (mark) Object.Destroy(mark);

@@ -21,7 +21,7 @@ namespace Iaido_Katana
     {
         public const string ModGuid = "onononoki.Iaido_Katana";
         public const string ModName = "Iaido_Katana";
-        public const string ModVersion = "0.3.0";
+        public const string ModVersion = "0.3.1";
 
         internal static ManualLogSource Log;
         internal static ConfigEntry<bool> CounterEnabled;
@@ -47,6 +47,7 @@ namespace Iaido_Katana
         internal static ConfigEntry<int> ParryNormalMs;
         internal static ConfigEntry<bool> ParryPrecise;
         internal static ConfigEntry<float> ParryPreciseBonus;
+        internal static ConfigEntry<bool> ParryNoStagger;
         internal static ConfigEntry<bool> SwingTimeWarp;
         internal static ConfigEntry<float> WindupShare;
         internal static ConfigEntry<float> WindupSpeed;
@@ -104,6 +105,11 @@ namespace Iaido_Katana
         internal static ConfigEntry<float> ImpactCrashPitch;
         internal static ConfigEntry<float> ImpactCrashSeconds;
         internal static ConfigEntry<float> ImpactCrashVolume;
+        internal static ConfigEntry<string> ImpactExtraSounds;
+        internal static ConfigEntry<float> ParryClankVolume;
+        internal static ConfigEntry<bool> OwnParrySoundsOn;
+        internal static ConfigEntry<float> OwnParrySoundVolume;
+        internal static ConfigEntry<float> ParrySoundVolume;
         internal static ConfigEntry<bool> ThunderOn;
         internal static ConfigEntry<float> ThunderDamage;
         internal static ConfigEntry<float> ThunderPrep;
@@ -143,6 +149,12 @@ namespace Iaido_Katana
 
         internal static Plugin Instance;
 
+        // fine tuning values, bound in memory only at their defaults and never written, so the config file holds only
+        // what players and servers change
+        private static ConfigFile _fixed;
+        // the version that last wrote the config file, null for a new file
+        private static System.Version _configFrom;
+
         // placeholder look until the real model: krom in a darker steel
         private static readonly Color SteelTint = new Color(0.62f, 0.64f, 0.72f);
         // placeholder look of the ashlands katana: slayer with a cold blue cast for the lightning
@@ -153,6 +165,10 @@ namespace Iaido_Katana
             Log = Logger;
             Instance = this;
             var sync = new ConfigurationManagerAttributes { IsAdminOnly = true };
+            // read before the first setting rewrites the file, so each move to a new default runs only once
+            _configFrom = ConfigVersion(Config.ConfigFilePath);
+            Logger.LogInfo($"config file last written by {(_configFrom == null ? "no version (new file)" : "version " + _configFrom)}");
+            _fixed = new ConfigFile(Path.Combine(BepInEx.Paths.ConfigPath, ModGuid + ".fixed"), false) { SaveOnConfigSet = false };
 
             CounterEnabled = Config.Bind("Counter", "Enabled", true,
                 new ConfigDescription("A perfect parry with a katana strikes the attacker back on its own.", null, sync));
@@ -160,13 +176,13 @@ namespace Iaido_Katana
                 new ConfigDescription("Counter damage on the parried attacker as a multiple of the katana's damage, before Block skill. 2.5 hits like a Black Metal sword.",
                     new AcceptableValueRange<float>(0.5f, 10f), sync));
             // 0.2.1: the counter hits harder (the user), a value still at 0.2.0's default moves up
-            Renew(CounterMultiplier, 2.5f);
+            Renew(CounterMultiplier, 2.5f, "0.2.1");
             CounterArea = Config.Bind("Counter", "AreaHit", true,
                 new ConfigDescription("The counter also cuts every other enemy within a wide swing toward the parried attacker (Counter.AreaRange and AreaAngle), each in full. Melee parries only.", null, sync));
             CounterAreaMultiplier = Config.Bind("Counter", "AreaDamageMultiplier", 2f,
                 new ConfigDescription("Damage of that cut on the other enemies, as a multiple of the katana's damage (1 is a normal swing's hit). Each enemy takes it at most once, also when several are parried at the same moment.",
                     new AcceptableValueRange<float>(0f, 10f), sync));
-            Renew(CounterAreaMultiplier, 1f); // the first 0.2.1 test build had 1
+            Renew(CounterAreaMultiplier, 1f, "0.2.1"); // the first 0.2.1 test build had 1
             CounterAreaAngle = Config.Bind("Counter", "AreaAngle", 170f,
                 new ConfigDescription("Width of the counter's cut around the player, in degrees, centered on the parried attacker (170 reaches 85 degrees to each side).",
                     new AcceptableValueRange<float>(30f, 360f), sync));
@@ -175,13 +191,13 @@ namespace Iaido_Katana
                     new AcceptableValueRange<float>(1f, 8f), sync));
             ChopOn = Config.Bind("Chop", "Enabled", true,
                 new ConfigDescription("The counter's cut and the Thunderclap's dash also chop trees, logs and stumps in their reach, like an axe.", null, sync));
-            SteelChop = Config.Bind("Chop", "SteelChop", 50f,
+            SteelChop = _fixed.Bind("Chop", "SteelChop", 50f,
                 new ConfigDescription("Chop damage of the Steel Katana's counter cut (the Crystal Battleaxe has 50).", new AcceptableValueRange<float>(0f, 200f), sync));
-            SteelChopTier = Config.Bind("Chop", "SteelToolTier", 3,
+            SteelChopTier = _fixed.Bind("Chop", "SteelToolTier", 3,
                 new ConfigDescription("Tool tier of that chop: trees that need a higher tier take nothing (the Crystal Battleaxe has 3).", new AcceptableValueRange<int>(0, 10), sync));
-            FlametalChop = Config.Bind("Chop", "FlametalChop", 60f,
+            FlametalChop = _fixed.Bind("Chop", "FlametalChop", 60f,
                 new ConfigDescription("Chop damage of the Flametal Katana's counter cut and Thunderclap dash (the Black Metal Axe has 60).", new AcceptableValueRange<float>(0f, 200f), sync));
-            FlametalChopTier = Config.Bind("Chop", "FlametalToolTier", 4,
+            FlametalChopTier = _fixed.Bind("Chop", "FlametalToolTier", 4,
                 new ConfigDescription("Tool tier of that chop (the Black Metal Axe has 4).", new AcceptableValueRange<int>(0, 10), sync));
             BlockBonusMax = Config.Bind("Counter", "BlockSkillBonus", 1.5f,
                 new ConfigDescription("Extra counter damage from Block skill: 1x at skill 0, rising to this at skill 100.",
@@ -189,7 +205,7 @@ namespace Iaido_Katana
             ReflectMultiplier = Config.Bind("Counter", "ReflectMultiplier", 0.5f,
                 new ConfigDescription("Share of the counter that a parried arrow, spear or spell sends to the shooter.",
                     new AcceptableValueRange<float>(0f, 1f), sync));
-            CounterDelay = Config.Bind("Counter", "Delay", 0.1f,
+            CounterDelay = _fixed.Bind("Counter", "Delay", 0.1f,
                 new ConfigDescription("Seconds between the parry and the counter hit. The game only doubles damage on a staggered target once its stagger has started, so keep it at 0.1 or more.",
                     new AcceptableValueRange<float>(0f, 0.5f), sync));
             CounterInPvP = Config.Bind("Counter", "PvP", false,
@@ -206,17 +222,19 @@ namespace Iaido_Katana
             ParryPreciseBonus = Config.Bind("Parry", "PreciseCounterMultiplier", 1.15f,
                 new ConfigDescription("Counters and reflected hits in precise mode are this much stronger. Swings, the heavy attack and the thunderclap do not change.",
                     new AcceptableValueRange<float>(1f, 2f), sync));
-            SwingTimeWarp = Config.Bind("Swing", "TimeWarp", true,
+            ParryNoStagger = Config.Bind("Parry", "NoStagger", true,
+                new ConfigDescription("A katana parry never staggers you. The parried hit adds nothing to your stagger bar, and the bar empties. Running out of stamina still breaks the parry. Turned off, the game's stagger applies as before.", null, sync));
+            SwingTimeWarp = _fixed.Bind("Swing", "TimeWarp", true,
                 "Times katana swings so their hit lands when the greatsword's did. With Swing.UpperBody an even pace up to the hit, without it a slow windup and a fast strike. Only changes how your own swings look.");
-            WindupShare = Config.Bind("Swing", "WindupShare", 0.5f,
+            WindupShare = _fixed.Bind("Swing", "WindupShare", 0.5f,
                 new ConfigDescription("Only with Swing.UpperBody off. Share of the animation before the hit that plays as the slow windup. Must stay below WindupSpeed.", new AcceptableValueRange<float>(0.1f, 0.9f)));
-            WindupSpeed = Config.Bind("Swing", "WindupSpeed", 0.6f,
+            WindupSpeed = _fixed.Bind("Swing", "WindupSpeed", 0.6f,
                 new ConfigDescription("Only with Swing.UpperBody off. Animation speed during the windup. The strike speeds up to make up the time (3x with the defaults).", new AcceptableValueRange<float>(0.3f, 1f)));
-            NormalStrikeBoost = Config.Bind("Swing", "NormalStrikeBoost", 1.875f,
+            NormalStrikeBoost = _fixed.Bind("Swing", "NormalStrikeBoost", 1.875f,
                 new ConfigDescription("Only with Swing.UpperBody off. Makes the strike of normal swings this much faster. The windup slows down so the hit lands at the same moment as vanilla.", new AcceptableValueRange<float>(1f, 3f)));
-            HeavyStrikeBoost = Config.Bind("Swing", "HeavyStrikeBoost", 1.3f,
+            HeavyStrikeBoost = _fixed.Bind("Swing", "HeavyStrikeBoost", 1.3f,
                 new ConfigDescription("Only for a borrowed heavy motion (HeavyAnimationFrom other than UpperBody). Makes the slash of the heavy attack this much faster. Its raise slows down so the hit lands at the same moment.", new AcceptableValueRange<float>(1f, 3f)));
-            HeavyDuration = Config.Bind("Swing", "HeavyDuration", 2f,
+            HeavyDuration = _fixed.Bind("Swing", "HeavyDuration", 2f,
                 new ConfigDescription("Total length of the heavy attack in seconds, recovery included. Only the raise changes to fit, the slash keeps its speed. 0 turns this off.", new AcceptableValueRange<float>(0f, 4f)));
             HeavyDamageMultiplier = Config.Bind("Counter", "HeavyDamageMultiplier", 6f,
                 new ConfigDescription("Damage of the heavy attack as a multiple of the katana's damage (Krom's thrust is 3).", new AcceptableValueRange<float>(1f, 10f), sync));
@@ -225,7 +243,7 @@ namespace Iaido_Katana
                 new ConfigDescription("Stamina cost of the Steel Katana's heavy attack (Krom's thrust is 40), so it cannot be spammed.", new AcceptableValueRange<float>(0f, 100f), sync));
             HeavyStamina.SettingChanged += (s, e) => ApplyAttackSettings();
             // a heavy stamina still at the old default moves to the new one
-            Renew(HeavyStamina, 50f);
+            Renew(HeavyStamina, 50f, "0.2.2");
             SwingStamina = Config.Bind("Counter", "SwingStamina", 16f,
                 new ConfigDescription("Stamina cost of the Steel Katana's normal swings (Krom's are 20).", new AcceptableValueRange<float>(0f, 100f), sync));
             SwingStamina.SettingChanged += (s, e) => ApplyAttackSettings();
@@ -233,90 +251,101 @@ namespace Iaido_Katana
             FlametalSwingStamina = Config.Bind("Counter", "FlametalSwingStamina", 20f,
                 new ConfigDescription("Stamina cost of the Flametal Katana's normal swings (SwingStamina is the Steel Katana's).", new AcceptableValueRange<float>(0f, 100f), sync));
             FlametalSwingStamina.SettingChanged += (s, e) => ApplyAttackSettings();
-            Renew(FlametalSwingStamina, 24f);
+            Renew(FlametalSwingStamina, 24f, "0.2.2");
             FlametalHeavyStamina = Config.Bind("Counter", "FlametalHeavyStamina", 60f,
                 new ConfigDescription("Stamina cost of the Flametal Katana's heavy attack (HeavyStamina is the Steel Katana's).", new AcceptableValueRange<float>(0f, 100f), sync));
             FlametalHeavyStamina.SettingChanged += (s, e) => ApplyAttackSettings();
             // which swings the katanas play is set by the server, so every player sees the same, and applied when it arrives.
             // the katana's own swings and the one-handed movement are experimental, off by default (12 Oct: they felt
             // weightless and cut off from the body)
-            UpperBodySwings = Config.Bind("Swing", "UpperBody", false,
+            UpperBodySwings = _fixed.Bind("Swing", "UpperBody", false,
                 new ConfigDescription("Experimental, work in progress. Katana swings play on the game's upper body animation layer, so the legs keep walking during a swing, and the katana's own cuts show over it. Off: the greatsword swings. Set by the server in multiplayer.", null, sync));
             // 0.2.0: the katana's own full-body animations (the three cuts and the heavy, clips made in Unity), on by
             // default. they replace the two test switches FullBodyCuts and ClipTest of 0.1.3
             CustomAnimations = Config.Bind("Swing", "CustomAnimations", true,
-                new ConfigDescription("The katana's own full-body animations for the three cuts and the heavy attack. Off: the older animations borrowed from Krom (the swings) and Stagbreaker (the heavy). Off while Swing.UpperBody is on. Set by the server in multiplayer.", null, sync));
-            FullBodyStrikeBoost = Config.Bind("Swing", "FullBodyStrikeBoost", 1f,
+                new ConfigDescription("The katana's own full-body animations for the three cuts and the heavy attack. Off: the older animations borrowed from Krom (the swings) and Stagbreaker (the heavy). Set by the server in multiplayer.", null, sync));
+            FullBodyStrikeBoost = _fixed.Bind("Swing", "FullBodyStrikeBoost", 1f,
                 new ConfigDescription("Only for the katana's own animations (Swing.CustomAnimations). Like NormalStrikeBoost: 1 strikes in about 80 ms after a slow windup, higher strikes faster.", new AcceptableValueRange<float>(1f, 3f)));
             CustomAnimations.SettingChanged += (s, e) => ApplyMoveSettings();
-            OneHandedMoves = Config.Bind("Swing", "OneHandedMoves", false,
+            OneHandedMoves = _fixed.Bind("Swing", "OneHandedMoves", false,
                 new ConfigDescription("Experimental, work in progress. The katana uses the one-handed sword's idle, walk, run and block animations (it stays a two-handed weapon). Set by the server in multiplayer.", null, sync));
-            HeavyAnimationFrom = Config.Bind("Swing", "HeavyAnimationFrom", "SledgeStagbreaker",
+            HeavyAnimationFrom = _fixed.Bind("Swing", "HeavyAnimationFrom", "SledgeStagbreaker",
                 new ConfigDescription("Weapon whose heavy motion the heavy attack borrows, by prefab name (for example SledgeStagbreaker, SledgeIron), with its own legs. The hit stays the katana's own slash. UpperBody (experimental, with Swing.UpperBody on): the katana's own overhead cut. Set by the server in multiplayer.", null, sync));
-            HeavyAnimationSlot = Config.Bind("Swing", "HeavyAnimationSlot", "Secondary",
+            HeavyAnimationSlot = _fixed.Bind("Swing", "HeavyAnimationSlot", "Secondary",
                 new ConfigDescription("Only for a borrowed heavy motion. Which of that weapon's attacks to borrow. On the two-handed hammers the secondary is the overhead ground slam. Set by the server in multiplayer.",
                     new AcceptableValueList<string>("Secondary", "Primary"), sync));
             UpperBodySwings.SettingChanged += (s, e) => ApplyMoveSettings();
             OneHandedMoves.SettingChanged += (s, e) => ApplyMoveSettings();
             HeavyAnimationFrom.SettingChanged += (s, e) => ApplyMoveSettings();
             HeavyAnimationSlot.SettingChanged += (s, e) => ApplyMoveSettings();
-            HeavySpeed = Config.Bind("Swing", "HeavySpeed", 1.7f,
+            HeavySpeed = _fixed.Bind("Swing", "HeavySpeed", 1.7f,
                 new ConfigDescription("Only for a borrowed heavy motion. Speeds up the heavy (secondary) attack up to its hit. The recovery after the hit plays at normal speed.", new AcceptableValueRange<float>(1f, 3f)));
-            CounterAnimation = Config.Bind("Swing", "CounterAnimation", true,
+            CounterAnimation = _fixed.Bind("Swing", "CounterAnimation", true,
                 "Play a fast swing on a parry, and land the counter on its hit moment. A placeholder until the iai animation exists.");
-            CounterAnimationSpeed = Config.Bind("Swing", "CounterAnimationSpeed", 5.5f,
+            CounterAnimationSpeed = _fixed.Bind("Swing", "CounterAnimationSpeed", 5.5f,
                 new ConfigDescription("Speed of that counter swing.", new AcceptableValueRange<float>(1f, 8f)));
             // hit area of the swings. krom: normal 2.6 m, 90 degrees, 0.5 ray. thrust 3 m, 30 degrees, 0.5 ray
-            NormalRange = Config.Bind("Hitbox", "NormalRange", 3.0f,
+            NormalRange = _fixed.Bind("Hitbox", "NormalRange", 3.0f,
                 new ConfigDescription("Reach of normal swings in meters (Krom 2.6).", new AcceptableValueRange<float>(1.5f, 6f), sync));
-            NormalAngle = Config.Bind("Hitbox", "NormalAngle", 110f,
+            NormalAngle = _fixed.Bind("Hitbox", "NormalAngle", 110f,
                 new ConfigDescription("Width of normal swings in degrees (Krom 90).", new AcceptableValueRange<float>(10f, 180f), sync));
-            NormalRayWidth = Config.Bind("Hitbox", "NormalRayWidth", 0.7f,
+            NormalRayWidth = _fixed.Bind("Hitbox", "NormalRayWidth", 0.7f,
                 new ConfigDescription("Thickness of normal swings in meters (Krom 0.5).", new AcceptableValueRange<float>(0.1f, 2f), sync));
-            HeavyRange = Config.Bind("Hitbox", "HeavyRange", 4.0f,
+            HeavyRange = _fixed.Bind("Hitbox", "HeavyRange", 4.0f,
                 new ConfigDescription("Reach of the heavy attack in meters (Krom's thrust 3).", new AcceptableValueRange<float>(1.5f, 8f), sync));
-            HeavyAngle = Config.Bind("Hitbox", "HeavyAngle", 45f,
+            HeavyAngle = _fixed.Bind("Hitbox", "HeavyAngle", 45f,
                 new ConfigDescription("Width of the heavy attack in degrees with the older borrowed animations (Krom's thrust 30). The katana's own heavy (Swing.CustomAnimations) cuts from high to low, a bit wider than the torso. Its chop takes this width.", new AcceptableValueRange<float>(5f, 180f), sync));
-            HeavyRayWidth = Config.Bind("Hitbox", "HeavyRayWidth", 0.9f,
+            HeavyRayWidth = _fixed.Bind("Hitbox", "HeavyRayWidth", 0.9f,
                 new ConfigDescription("Thickness of the heavy attack in meters with the older borrowed animations (Krom's thrust 0.5). The katana's own heavy (Swing.CustomAnimations) is torso wide.", new AcceptableValueRange<float>(0.1f, 2f), sync));
             foreach (var entry in new[] { NormalRange, NormalAngle, NormalRayWidth, HeavyRange, HeavyAngle, HeavyRayWidth })
                 entry.SettingChanged += (s, e) => ApplyAttackSettings();
             // the impact frame is only on your own screen, so every player sets it for themselves
             ImpactEnabled = Config.Bind("Impact", "Enabled", true,
                 "Impact frame when a counter lands: a short black and white flash, a camera jolt and a sharp sound. Only on your own screen.");
-            ImpactFlashSeconds = Config.Bind("Impact", "FlashSeconds", 0.07f,
+            ImpactFlashSeconds = _fixed.Bind("Impact", "FlashSeconds", 0.07f,
                 new ConfigDescription("How long the screen stays black and white and white-flashed, in real seconds (0.07 is about 4 frames at 60 fps). 0 turns the flash off.",
                     new AcceptableValueRange<float>(0f, 0.3f)));
-            ImpactContrast = Config.Bind("Impact", "FlashContrast", 1.5f,
+            ImpactContrast = _fixed.Bind("Impact", "FlashContrast", 1.5f,
                 new ConfigDescription("Contrast during the flash, as a multiple of the game's own.", new AcceptableValueRange<float>(1f, 1.65f)));
-            ImpactWhite = Config.Bind("Impact", "WhiteFlash", 0.45f,
+            ImpactWhite = _fixed.Bind("Impact", "WhiteFlash", 0.45f,
                 new ConfigDescription("Strength of a white flash over the whole screen, held for FlashSeconds and then faded out. With the ink frame it comes right after it. 0 turns it off.", new AcceptableValueRange<float>(0f, 1f)));
             ImpactInk = Config.Bind("Impact", "InkFrame", true,
                 "Ink frame: the moment of the cut freezes as a stark black and white picture, like an anime impact frame. Only on your own screen.");
-            ImpactInkSeconds = Config.Bind("Impact", "InkSeconds", 0.075f,
+            ImpactInkSeconds = _fixed.Bind("Impact", "InkSeconds", 0.075f,
                 new ConfigDescription("How long the ink frame stays, in real seconds.", new AcceptableValueRange<float>(0f, 0.5f)));
-            ImpactInkInvert = Config.Bind("Impact", "InkInvert", false,
+            ImpactInkInvert = _fixed.Bind("Impact", "InkInvert", false,
                 "Swap black and white in the ink frame (bright things turn black).");
-            ImpactInkCut = Config.Bind("Impact", "InkCut", true,
+            ImpactInkCut = _fixed.Bind("Impact", "InkCut", true,
                 "Draw the cut as a sharp streak through the enemy in the ink frame.");
-            ImpactFreeze = Config.Bind("Impact", "FreezeSeconds", 0.15f,
+            ImpactFreeze = _fixed.Bind("Impact", "FreezeSeconds", 0.15f,
                 new ConfigDescription("How long both fighters freeze when a counter lands, the game's own hit stop (a normal hit is much shorter).", new AcceptableValueRange<float>(0f, 0.4f)));
             ImpactShake = Config.Bind("Impact", "Shake", 1.7f,
                 new ConfigDescription("Strength of the camera jolt, on the game's own scale (a normal hit is 1.2, taking damage 1.6). Follows the game's camera shake setting. 0 turns it off.",
                     new AcceptableValueRange<float>(0f, 3f)));
-            ImpactSound = Config.Bind("Impact", "Sound", "sfx_metal_blocked_overlay",
+            ImpactSound = _fixed.Bind("Impact", "Sound", "sfx_metal_blocked_overlay",
                 "Game sound played when a counter lands, only for you. Empty turns it off. Other sharp ones: sfx_sword_hit, sfx_metal_blocked, sfx_HiveQueen_slash.");
-            ImpactVolume = Config.Bind("Impact", "SoundVolume", 1f,
+            ImpactVolume = _fixed.Bind("Impact", "SoundVolume", 0.42f,
                 new ConfigDescription("Volume of that sound, before the game's sound effect volume.", new AcceptableValueRange<float>(0f, 1f)));
-            ImpactCrash = Config.Bind("Impact", "CrashSound", "sfx_metalbars_break",
-                "Second sound under the first: a crash played slower and deeper (the game's metal bars breaking). Empty turns it off.");
-            ImpactCrashPitch = Config.Bind("Impact", "CrashPitch", 0.65f,
+            ImpactCrash = _fixed.Bind("Impact", "CrashSound", "",
+                "Second sound under the first: a crash played slower and deeper (for example sfx_metalbars_break, the game's metal bars breaking). Empty turns it off.");
+            ImpactCrashPitch = _fixed.Bind("Impact", "CrashPitch", 0.65f,
                 new ConfigDescription("Speed of the crash: below 1 is slower and deeper.", new AcceptableValueRange<float>(0.3f, 1.5f)));
-            ImpactCrashSeconds = Config.Bind("Impact", "CrashSeconds", 0.85f,
+            ImpactCrashSeconds = _fixed.Bind("Impact", "CrashSeconds", 0.85f,
                 new ConfigDescription("The crash stops after this many seconds, fading out over the end, so it stays a hit. 0 plays it whole (over 3 s when slowed).", new AcceptableValueRange<float>(0f, 4f)));
-            ImpactCrashVolume = Config.Bind("Impact", "CrashVolume", 1.3f,
+            ImpactCrashVolume = _fixed.Bind("Impact", "CrashVolume", 1.3f,
                 new ConfigDescription("Volume of the crash, before the game's sound effect volume. Above 1 it is played more than once at the same moment to get louder.", new AcceptableValueRange<float>(0f, 2f)));
-            KatanaModelOn = Config.Bind("Visual", "KatanaModel", true,
+            ImpactExtraSounds = _fixed.Bind("Impact", "ExtraSounds", ImpactFrame.DefaultExtraSounds,
+                "More game sounds played when a counter lands, only for you, as Name:pitch:volume:seconds separated by commas. Pitch 0 keeps the sound's own pitch, a range like 2.8-3 picks one each time, seconds 0 plays it whole. Empty turns them off.");
+            OwnParrySoundsOn = Config.Bind("Impact", "OwnParrySounds", true,
+                "Play your own sounds when a counter lands: .wav files (16 bit) in BepInEx/config/" + OwnParrySounds.FolderName + ", one picked at random each time. With no files there, the mod's own parry sound plays. Only for you.");
+            OwnParrySoundVolume = Config.Bind("Impact", "OwnParrySoundVolume", 1f,
+                new ConfigDescription("Volume of your own parry sounds, before the game's sound effect volume.", new AcceptableValueRange<float>(0f, 1f)));
+            ParrySoundVolume = Config.Bind("Impact", "ParrySoundVolume", 1f,
+                new ConfigDescription("Volume of the mod's own parry sound when a counter lands (and of the thunderclap's first hit), before the game's sound effect volume. 0 turns it off. Your own parry sounds have OwnParrySoundVolume.", new AcceptableValueRange<float>(0f, 2f)));
+            ParryClankVolume = _fixed.Bind("Impact", "ParryClankVolume", 0.42f,
+                new ConfigDescription("Volume of a katana's block clank when it parries, against the game's own (1). Yours, for every katana parry you hear.", new AcceptableValueRange<float>(0f, 1f)));
+            ParryClankVolume.SettingChanged += (s, e) => ParryClank.ApplyVolume();
+            KatanaModelOn = _fixed.Bind("Visual", "KatanaModel", true,
                 "Show the katana model. Off shows the old placeholder look (a recolored Krom or Slayer). Needs a restart.");
             ScabbardOn = Config.Bind("Visual", "Scabbard", true,
                 "A scabbard at the left hip while a katana is in the hand. In the stance the blade sits in it, and a parry draws it out. Needs the katana model and the stance.");
@@ -346,7 +375,7 @@ namespace Iaido_Katana
                 new ConfigDescription("How far the dash goes, meters. It stops short of walls, rocks and buildings.", new AcceptableValueRange<float>(0f, 20f), sync));
             ThunderWidth = Config.Bind("Thunderclap", "Width", 2f,
                 new ConfigDescription("How far to each side of the path a creature can be and still be cut, meters (the blade sweeps from 1.6 m left to 2 m right of the body).", new AcceptableValueRange<float>(0.3f, 3f), sync));
-            Renew(ThunderWidth, 1f); // a width still at the old default moves to the new one
+            Renew(ThunderWidth, 1f, "0.3.0"); // a width still at the old default moves to the new one
             ThunderStamina = Config.Bind("Thunderclap", "Stamina", 100f,
                 new ConfigDescription("Stamina the thunderclap costs, before gear and the Swords skill lower it like any attack's.", new AcceptableValueRange<float>(0f, 200f), sync));
             ThunderTrailOn = Config.Bind("Thunderclap", "LightningTrail", true,
@@ -354,79 +383,68 @@ namespace Iaido_Katana
             ChargeSoundVolume = Config.Bind("Thunderclap", "ChargeSoundVolume", 1f,
                 new ConfigDescription("Volume of the gathering's sound (a rising electric hum, crackles, a charge and a scream, a thunder crack on the cut), before the game's sound effect volume. 0 turns it off. Yours.", new AcceptableValueRange<float>(0f, 2f)));
             ThunderAfterimage = Config.Bind("Thunderclap", "Afterimage", "Path",
-                new ConfigDescription("What the cut leaves behind when the dash ends: Path, a long streak of blue white light along the whole dash. Arc, the parry's arc around the player where the dash ended (a test version). Both, or Off. Yours, for every player you see.",
+                new ConfigDescription("What the cut leaves behind when the dash ends: Path, a long streak of blue white light along the whole dash. Arc, an arc of light like the parry's in front of where the dash ended, where the cut also reaches. Both, or Off. Yours, for every player you see.",
                     new AcceptableValueList<string>("Path", "Arc", "Both", "Off")));
             ChargeBallOn = Config.Bind("Thunderclap", "ChargeBall", true,
                 "A ball of lightning grows at the hands while the crouch gathers and bursts on the cut. Yours, for every player you see.");
-            ImpactClick = Config.Bind("Impact", "ClickSound", "sfx_metal_blocked",
+            ImpactClick = _fixed.Bind("Impact", "ClickSound", "sfx_metal_blocked",
                 "The click when the blade is back in its scabbard after the parry's cut, heard by everyone near. Played high and cut very short. Empty turns it off.");
-            ImpactClickPitch = Config.Bind("Impact", "ClickPitch", 2.2f,
+            ImpactClickPitch = _fixed.Bind("Impact", "ClickPitch", 2.2f,
                 new ConfigDescription("Speed of the click: above 1 is faster and higher.", new AcceptableValueRange<float>(0.5f, 3f)));
-            ImpactClickVolume = Config.Bind("Impact", "ClickVolume", 0.35f,
+            ImpactClickVolume = _fixed.Bind("Impact", "ClickVolume", 0.35f,
                 new ConfigDescription("Volume of the click, before the game's sound effect volume.", new AcceptableValueRange<float>(0f, 1f)));
             // the stance only turns bones on your screen, for every player you see, so each player sets it for themselves
             var stance = new StanceSettings();
             StanceEnabled = Config.Bind("Stance", "Enabled", true,
                 "Iai stance with a katana: the upper body turns left, the right hand rests on the grip and the left hand holds the scabbard at the left hip. Shown on every player you see.");
-            StanceReady = Config.Bind("Stance", "ReadyIdle", true,
+            StanceReady = _fixed.Bind("Stance", "ReadyIdle", true,
                 "Rest in the stance whenever a katana is in the hand and you stand or walk (and run, with ReadyWhileRunning), so it sits in its scabbard. Swings, dodges and emotes leave it on their own. Off: only while blocking.");
-            StanceReadyRunning = Config.Bind("Stance", "ReadyWhileRunning", true,
+            StanceReadyRunning = _fixed.Bind("Stance", "ReadyWhileRunning", true,
                 "The ready stance also holds while jogging, sprinting and jumping, so the katana stays sheathed until you swing or parry. Off: only standing and walking.");
-            StanceSheathe = Config.Bind("Stance", "SheatheSeconds", 0.35f,
+            StanceSheathe = _fixed.Bind("Stance", "SheatheSeconds", 0.35f,
                 new ConfigDescription("Seconds to move back into the stance when coming to rest, with a gentle start and end. Blocks use BlendIn instead.", new AcceptableValueRange<float>(0f, 1.5f)));
-            StanceZanshin = Config.Bind("Stance", "Zanshin", 0.6f,
+            StanceZanshin = _fixed.Bind("Stance", "Zanshin", 0.6f,
                 new ConfigDescription("Seconds the blade stays out after a counter, before the flick and the sheathing.", new AcceptableValueRange<float>(0f, 5f)));
-            StanceNoto = Config.Bind("Stance", "SheathingSeconds", 1.5f,
+            StanceNoto = _fixed.Bind("Stance", "SheathingSeconds", 1.5f,
                 new ConfigDescription("How long the flick and the slow sheathing after fighting take. Put away waits for it.", new AcceptableValueRange<float>(0.5f, 3f)));
-            StanceSlash = Config.Bind("Stance", "IaiSlash", true,
+            StanceSlash = _fixed.Bind("Stance", "IaiSlash", true,
                 "On a perfect parry the katana is drawn from the stance and cuts across from left to right, and the counter lands as the blade passes. Off plays the old fast swing (Swing.CounterAnimation). Needs Stance.Enabled.");
-            StanceBlendIn = Config.Bind("Stance", "BlendIn", 0.04f,
+            StanceBlendIn = _fixed.Bind("Stance", "BlendIn", 0.04f,
                 new ConfigDescription("Seconds to move into the stance when the block starts.", new AcceptableValueRange<float>(0f, 0.5f)));
-            StanceBlendOut = Config.Bind("Stance", "BlendOut", 0.12f,
+            StanceBlendOut = _fixed.Bind("Stance", "BlendOut", 0.12f,
                 new ConfigDescription("Seconds to leave it when the block ends, a roll or a swing starts.", new AcceptableValueRange<float>(0f, 0.5f)));
-            Renew(StanceBlendOut, 0.06f); // 0.2.1: 0.06 snapped (the user: every transition must be smooth)
-            StanceGripSide = Config.Bind("Stance", "GripSide", stance.Grip.x,
+            StanceGripSide = _fixed.Bind("Stance", "GripSide", stance.Grip.x,
                 new ConfigDescription("Where the right hand holds the grip, meters to the right of the body's middle (negative is left).", new AcceptableValueRange<float>(-0.4f, 0.4f)));
-            StanceGripHeight = Config.Bind("Stance", "GripHeight", stance.Grip.y,
+            StanceGripHeight = _fixed.Bind("Stance", "GripHeight", stance.Grip.y,
                 new ConfigDescription("Height of that hand, meters above the feet of a standing player (the hips are at 0.91).", new AcceptableValueRange<float>(0.6f, 1.6f)));
-            StanceGripForward = Config.Bind("Stance", "GripForward", stance.Grip.z,
+            StanceGripForward = _fixed.Bind("Stance", "GripForward", stance.Grip.z,
                 new ConfigDescription("How far in front of the body that hand is, meters.", new AcceptableValueRange<float>(-0.2f, 0.6f)));
-            StanceBladeYaw = Config.Bind("Stance", "BladeYaw", stance.BladeYaw,
+            StanceBladeYaw = _fixed.Bind("Stance", "BladeYaw", stance.BladeYaw,
                 new ConfigDescription("Where the blade points, degrees: 180 straight back, more turns it out to the left.", new AcceptableValueRange<float>(90f, 270f)));
-            StanceBladePitch = Config.Bind("Stance", "BladePitch", stance.BladePitch,
+            StanceBladePitch = _fixed.Bind("Stance", "BladePitch", stance.BladePitch,
                 new ConfigDescription("How much the blade slopes down, degrees.", new AcceptableValueRange<float>(-30f, 80f)));
-            StanceTwist = Config.Bind("Stance", "Twist", stance.SpineTwist,
+            StanceTwist = _fixed.Bind("Stance", "Twist", stance.SpineTwist,
                 new ConfigDescription("Turn of the upper body, degrees (negative is to the left). The head keeps looking ahead.", new AcceptableValueRange<float>(-60f, 30f)));
-            StanceLean = Config.Bind("Stance", "Lean", stance.SpineLean,
+            StanceLean = _fixed.Bind("Stance", "Lean", stance.SpineLean,
                 new ConfigDescription("Forward lean of the upper body, degrees.", new AcceptableValueRange<float>(-20f, 40f)));
-            StanceLeftHand = Config.Bind("Stance", "LeftHandOnBlade", stance.LeftAlongBlade,
+            StanceLeftHand = _fixed.Bind("Stance", "LeftHandOnBlade", stance.LeftAlongBlade,
                 new ConfigDescription("Where the left hand holds the scabbard, meters along it from the right hand (the mouth is at about 0.12).", new AcceptableValueRange<float>(0.08f, 0.5f)));
-            StanceSpineHold = Config.Bind("Stance", "SpineHold", 1f,
+            StanceSpineHold = _fixed.Bind("Stance", "SpineHold", 1f,
                 new ConfigDescription("How much the stance holds the upper body upright over the game's idle, walk and run, which hunch it forward. 1 holds it fully, so the hands sit exactly where the stance puts them. 0 leaves the game's.", new AcceptableValueRange<float>(0f, 1f)));
-            StanceTorsoHold = Config.Bind("Stance", "TorsoHold", 1f,
+            StanceTorsoHold = _fixed.Bind("Stance", "TorsoHold", 1f,
                 new ConfigDescription("How much the stance keeps the chest facing ahead while the game's clips turn the hips: blocking while moving side to side, and the sway of each running stride. The legs keep their steps. 0 leaves the game's.", new AcceptableValueRange<float>(0f, 1f)));
-            StanceShoulderHold = Config.Bind("Stance", "ShoulderHold", 1f,
+            StanceShoulderHold = _fixed.Bind("Stance", "ShoulderHold", 1f,
                 new ConfigDescription("How much the stance holds the collarbones still over the game's walk and run, which rock the shoulders under the hands on the grip. 0 leaves the game's.", new AcceptableValueRange<float>(0f, 1f)));
-            // the stance changed in 0.1.1: values still at 0.1.0's defaults move to the new ones, changed ones stay
-            Renew(StanceGripSide, -0.1f);
-            Renew(StanceGripHeight, 1.14f);
-            Renew(StanceGripForward, 0.2f);
-            Renew(StanceBladeYaw, 228f);
-            Renew(StanceBladePitch, 24f);
-            Renew(StanceTwist, -32f);
-            Renew(StanceLean, 10f);
-            Renew(StanceLeftHand, 0.15f);
-            Renew(StanceBladeYaw, 215f); // a yaw still at the old default moves to the new one
-            Renew(StanceSpineHold, 0.8f); // holds still at the old defaults move to the new ones
-            Renew(StanceShoulderHold, 0.8f);
             // 0.2.0: Swing.CustomAnimations took over the two test switches, their old lines leave the config file
             DropOldSettings(("Swing", "FullBodyCuts"), ("Swing", "ClipTest"));
-            DumpAnimationClips = Config.Bind("Debug", "DumpAnimationClips", false,
+            DumpAnimationClips = _fixed.Bind("Debug", "DumpAnimationClips", false,
                 "Write the names of all player animation clips and the playing states to the log once, for making replacement animations.");
             LogCounters = Config.Bind("Debug", "LogCounters", false,
                 "Write every counter's damage and the learned swing timings to the log. For tuning.");
-            RecordPoses = Config.Bind("Debug", "RecordPoses", false,
+            RecordPoses = _fixed.Bind("Debug", "RecordPoses", false,
                 "While a katana is in your hand, write your pose 120 times a second to BepInEx\\IaidoPoses (a new file each time it is taken out). For tuning the animations.");
+            // every line no setting reads anymore goes too: the fine tuning values that left the file in 0.3.1 and older ones
+            DropOldSettings();
 
             AddLocalization();
             ClipSwap.Load();
@@ -435,21 +453,50 @@ namespace Iaido_Katana
             Logger.LogInfo($"{ModName} {ModVersion} loaded");
         }
 
-        // a setting still at an old default takes the new default
-        private static void Renew(ConfigEntry<float> entry, float oldDefault)
+        // a setting still at an old default takes the new default, once: only when the file was last written by a version
+        // older than the one that changed it (since), so a value picked back by hand stays
+        private static void Renew(ConfigEntry<float> entry, float oldDefault, string since)
         {
-            if (Mathf.Abs(entry.Value - oldDefault) < 1e-4f) entry.Value = (float)entry.DefaultValue;
+            if (!ConfigMoves(_configFrom, since) || Mathf.Abs(entry.Value - oldDefault) >= 1e-4f) return;
+            entry.Value = (float)entry.DefaultValue;
+            Log.LogInfo($"config: {entry.Definition} moved from the old default {oldDefault} to {entry.Value}");
         }
 
-        // settings that no longer exist: BepInEx keeps their lines in the file as orphans, so they are dropped here
+        internal static bool ConfigMoves(System.Version from, string since) => from != null && from < new System.Version(since);
+
+        // BepInEx starts the file with "## Settings file was created by plugin <name> v<version>". no file is a new
+        // config with nothing to move, a file without a version counts as old
+        internal static System.Version ConfigVersion(string path)
+        {
+            try
+            {
+                return File.Exists(path) ? ConfigVersionOf(File.ReadLines(path).FirstOrDefault()) : null;
+            }
+            catch (System.Exception)
+            {
+                return new System.Version(0, 0);
+            }
+        }
+
+        internal static System.Version ConfigVersionOf(string firstLine)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(firstLine ?? "", @" v(\d+(\.\d+){1,3})\s*$");
+            return match.Success ? new System.Version(match.Groups[1].Value) : new System.Version(0, 0);
+        }
+
+        // settings that no longer exist: BepInEx keeps their lines in the file as orphans, so they are dropped here. no
+        // names drops every orphan, so call it that way only after the last setting is bound
         private void DropOldSettings(params (string section, string key)[] old)
         {
             try
             {
                 if (!(AccessTools.Property(typeof(ConfigFile), "OrphanedEntries")?.GetValue(Config) is Dictionary<ConfigDefinition, string> orphans)) return;
-                bool removed = false;
-                foreach (var (section, key) in old) removed |= orphans.Remove(new ConfigDefinition(section, key));
-                if (removed) Config.Save();
+                var gone = old.Length == 0 ? orphans.Keys.ToList() : old.Select(o => new ConfigDefinition(o.section, o.key)).ToList();
+                int removed = 0;
+                foreach (var definition in gone) if (orphans.Remove(definition)) removed++;
+                if (removed == 0) return;
+                Config.Save();
+                Log.LogInfo($"config: {removed} old settings removed from the file");
             }
             catch (System.Exception e)
             {
@@ -479,6 +526,7 @@ namespace Iaido_Katana
             var shared = prefab.GetComponent<ItemDrop>().m_itemData.m_shared;
             float basePower = shared.m_blockPower; // the base sword's, before the katana's own stats
             applyStats(shared);
+            ParryClank.Prepare(shared, token);
             Katana.BaseBlockPower[token] = basePower;
             KatanaShared.Add(shared);
             if (prefabName == Katana.FlametalPrefab) FlametalShared.Add(shared);

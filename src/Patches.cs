@@ -44,13 +44,51 @@ namespace Iaido_Katana
                 return code;
             }
 
-            // decided before the block runs, with the same test the game uses
-            private static void Prefix(Humanoid __instance, out bool __state) =>
+            // decided before the block runs, with the same test the game uses. with Parry.NoStagger the parried hit adds no
+            // stagger, because the game adds it before it decides whether the block held
+            private static void Prefix(Humanoid __instance, out bool __state)
+            {
                 __state = __instance == Player.m_localPlayer && Katana.IsKatanaParry(__instance);
+                NoStaggerOnParry.Guarding = __state && Plugin.ParryNoStagger.Value ? __instance : null;
+                // the katana's block clank plays quieter on its parry
+                if (__state) ParryClank.Swap(Katana.CurrentBlocker(__instance));
+            }
 
             private static void Postfix(Humanoid __instance, HitData hit, Character attacker, bool __result, bool __state)
             {
+                // the parry held (the game's test is stamina left and no stagger), so the stagger bar empties
+                if (__result && __state && Plugin.ParryNoStagger.Value && __instance.HaveStamina(0f)) NoStaggerOnParry.EmptyBar(__instance);
                 if (__result && __state && attacker) Counter.Start((Player)__instance, attacker, hit.m_ranged);
+            }
+
+            private static void Finalizer()
+            {
+                NoStaggerOnParry.Guarding = null;
+                ParryClank.Restore();
+            }
+        }
+
+        // the hit of a katana parry that is being blocked right now adds no stagger to the parrying player
+        [HarmonyPatch(typeof(Character), "AddStaggerDamage")]
+        private static class NoStaggerOnParry
+        {
+            internal static Humanoid Guarding;
+
+            private static readonly AccessTools.FieldRef<Character, float> StaggerDamage = AccessTools.FieldRefAccess<Character, float>("m_staggerDamage");
+
+            private static bool Prefix(Character __instance, float damage, ref bool __result)
+            {
+                if (!Guarding || __instance != Guarding) return true;
+                __result = false;
+                if (Plugin.LogCounters.Value) Plugin.Log.LogInfo($"katana parry: {damage:0.#} stagger from the parried hit not added");
+                return false;
+            }
+
+            internal static void EmptyBar(Character character)
+            {
+                float bar = StaggerDamage(character);
+                StaggerDamage(character) = 0f;
+                if (Plugin.LogCounters.Value) Plugin.Log.LogInfo($"katana parry: stagger bar emptied (was {bar:0.#})");
             }
         }
 

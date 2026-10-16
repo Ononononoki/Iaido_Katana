@@ -24,7 +24,7 @@ namespace Iaido_Katana
 
         // the float array version of the clip's sample call, found by its exact parameters: the game's unity also has
         // span versions the mod's .net target can not compile against
-        private static readonly System.Reflection.MethodInfo SetData = SampleCall("SetData");
+        internal static readonly System.Reflection.MethodInfo SetData = SampleCall("SetData");
 
         // each overload is looked at on its own: reading a span version's parameters fails where span is unknown
         private static System.Reflection.MethodInfo SampleCall(string name)

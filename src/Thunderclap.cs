@@ -171,9 +171,23 @@ namespace Iaido_Katana
                 if (!who || who == player || who.IsDead() || !seen.Add(who) || !Enemy(player, who)) continue;
                 Targets.Add(new Target { Who = who, At = Mathf.Clamp(Vector3.Dot(who.transform.position - _from, _dir), 0f, _distance) });
             }
+            // the cut also reaches in front of where the dash ends, as wide and far as the counter's cut, so an enemy just
+            // past the end is not missed. each is hit once, when the dash arrives there, not through walls and rocks
+            var end = _from + _dir * _distance + Vector3.up * BodyHeight;
+            int ahead = 0;
+            foreach (var who in Character.GetAllCharacters())
+            {
+                if (!who || who == player || who.IsDead() || seen.Contains(who) || !Enemy(player, who)) continue;
+                var point = who.GetCenterPoint();
+                if (!Katana.InSwing(point - end, _dir, who.GetRadius(), Plugin.CounterAreaRange.Value, Plugin.CounterAreaAngle.Value, Counter.AreaHeight)) continue;
+                if (Physics.Linecast(end, point, Walls)) continue;
+                seen.Add(who);
+                Targets.Add(new Target { Who = who, At = _distance });
+                ahead++;
+            }
             Targets.Sort((a, b) => a.At.CompareTo(b.At));
             FindTrees(player);
-            if (Plugin.LogCounters.Value) Plugin.Log.LogInfo($"thunderclap: cut, dash {_distance:0.0} m, {Targets.Count} on the way, {Trees.Count} trees, logs or stumps to chop");
+            if (Plugin.LogCounters.Value) Plugin.Log.LogInfo($"thunderclap: cut, dash {_distance:0.0} m, {Targets.Count} on the way ({ahead} in front of its end), {Trees.Count} trees, logs or stumps to chop");
         }
 
         // the trees, logs and stumps along the path, including the one the dash stops at (it counts as a wall)

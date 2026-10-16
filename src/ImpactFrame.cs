@@ -1,5 +1,7 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
+using System.Globalization;
 using HarmonyLib;
 using UnityEngine;
 using UnityEngine.PostProcessing;
@@ -342,13 +344,116 @@ namespace Iaido_Katana
             camera.AddShake(camera.transform.position, ShakeRange, strength, false);
         }
 
-        // two layers: a sharp metal ring, and under it a crash slowed down and cut short with a fade, so it is
-        // heavy but stays a hit
+        // a counter's impact plays the player's own parry sounds when there are any (Impact.OwnParrySounds), else the
+        // mod's: a soft metal ring, a crash slowed down and cut short (off by default), and the extra layers
+        // (Impact.ExtraSounds), all at Impact.ParrySoundVolume. the thunderclap's hit plays only the ring
         private static void Sound(Vector3 point, bool crash)
         {
-            PlayLayer(point, Plugin.ImpactSound.Value, 0f, Plugin.ImpactVolume.Value, 0f);
-            if (crash) PlayLayer(point, Plugin.ImpactCrash.Value, Plugin.ImpactCrashPitch.Value, Plugin.ImpactCrashVolume.Value, Plugin.ImpactCrashSeconds.Value);
+            if (crash && OwnParrySounds.Play()) return;
+            float volume = Plugin.ParrySoundVolume.Value;
+            PlayLayer(point, Plugin.ImpactSound.Value, 0f, Plugin.ImpactVolume.Value * volume, 0f);
+            if (!crash) return;
+            PlayLayer(point, Plugin.ImpactCrash.Value, Plugin.ImpactCrashPitch.Value, Plugin.ImpactCrashVolume.Value * volume, Plugin.ImpactCrashSeconds.Value);
+            var sets = ExtraLayers();
+            if (sets.Length == 0) return;
+            // one of the sets each time, never the same one twice in a row
+            int set = 0;
+            if (sets.Length > 1)
+            {
+                set = _lastSet < 0 ? Random.Range(0, sets.Length) : Random.Range(0, sets.Length - 1);
+                if (_lastSet >= 0 && set >= _lastSet) set++;
+            }
+            _lastSet = set;
+            var extra = sets[set];
+            foreach (var layer in extra) PlayLayer(point, layer.Name, layer.PitchMax > layer.Pitch ? Random.Range(layer.Pitch, layer.PitchMax) : layer.Pitch, layer.Volume * volume, layer.Seconds, false, layer.Start);
+            if (Plugin.LogCounters.Value && extra.Length > 0) Plugin.Log.LogInfo($"impact: sound set {set + 1} of {sets.Length}, {extra.Length} extra sounds played");
         }
+
+        // the extra layers of the counter's impact sound by default, six sets of which each parry plays one (the user's
+        // final set, 16 oct, parry_sound_listen13.py): the sword clash a little high, the pickaxe's ringing metal hit
+        // raised, and slowed iron bars clanging from 0.3 s into their clip (F1 to F3), or the bars with a metal hammer
+        // blow and the turret's armor clink (F4 to F6). F1 and F4 are the user's picks, the next two of each a little
+        // brighter and a little deeper. the volumes are each layer's share of the clash's loudness
+        internal const string DefaultExtraSounds =
+            "sfx_sword_hit:0.975-1.235:1:0:0, sfx_pickaxe_hit_vibration_only:1.3:0.14:0:0, sfx_metalbars_break:0.65-0.78:0.796:2.2:0.3, sfx_metalbars_break:0.715-0.845:0.802:2.2:0.3 | " +
+            "sfx_sword_hit:1.024-1.297:1:0:0, sfx_pickaxe_hit_vibration_only:1.404:0.145:0:0, sfx_metalbars_break:0.702-0.842:0.802:2.2:0.3, sfx_metalbars_break:0.772-0.913:0.808:2.2:0.3 | " +
+            "sfx_sword_hit:0.926-1.173:1:0:0, sfx_pickaxe_hit_vibration_only:1.196:0.134:0:0, sfx_metalbars_break:0.598-0.718:0.867:2.2:0.3, sfx_metalbars_break:0.658-0.777:0.876:2.2:0.3 | " +
+            "sfx_sword_hit:0.975-1.235:1:0:0, sfx_pickaxe_hit_vibration_only:1.3:0.14:0:0, sfx_metalbars_break:0.575-0.69:0.787:2.2:0.3, sfx_build_hammer_metal:0.575-0.69:0.581:2.2:0, fx_turret_newtarget:0.575-0.632:1.245:2.2:0 | " +
+            "sfx_sword_hit:1.024-1.297:1:0:0, sfx_pickaxe_hit_vibration_only:1.404:0.145:0:0, sfx_metalbars_break:0.621-0.745:0.794:2.2:0.3, sfx_build_hammer_metal:0.621-0.745:0.597:2.2:0, fx_turret_newtarget:0.621-0.683:1.132:2.2:0 | " +
+            "sfx_sword_hit:0.926-1.173:1:0:0, sfx_pickaxe_hit_vibration_only:1.196:0.134:0:0, sfx_metalbars_break:0.529-0.635:0.849:2.2:0.3, sfx_build_hammer_metal:0.529-0.635:0.456:2.2:0, fx_turret_newtarget:0.529-0.581:1.569:2.2:0";
+
+        internal struct Layer
+        {
+            internal string Name;
+            internal float Pitch, PitchMax, Volume, Seconds, Start;
+        }
+
+        private static string _extraText;
+        private static Layer[][] _extra = new Layer[0][];
+        private static int _lastSet = -1;
+
+        // the sets of extra layers from Impact.ExtraSounds, parsed again only when the text changes
+        private static Layer[][] ExtraLayers()
+        {
+            string text = Plugin.ImpactExtraSounds.Value ?? "";
+            if (text == _extraText) return _extra;
+            _extraText = text;
+            _lastSet = -1;
+            var warnings = new List<string>();
+            _extra = ParseSets(text, warnings).ToArray();
+            foreach (var warning in warnings) Plugin.Log.LogWarning("Impact.ExtraSounds: " + warning);
+            return _extra;
+        }
+
+        // "set | set | ...", each set a list of layers. empty sets are left out
+        internal static List<Layer[]> ParseSets(string text, List<string> warnings)
+        {
+            var sets = new List<Layer[]>();
+            foreach (var part in (text ?? "").Split('|'))
+            {
+                var layers = ParseLayers(part, warnings);
+                if (layers.Count > 0) sets.Add(layers.ToArray());
+            }
+            return sets;
+        }
+
+        // "name:pitch:volume:seconds[:start], ..." into layers. pitch 0 keeps the sound's own pitch range, a pitch like
+        // 2.8-3 picks one in that range each time, seconds 0 plays it whole, start begins that many seconds into the clip.
+        // broken entries are skipped with a warning
+        internal static List<Layer> ParseLayers(string text, List<string> warnings)
+        {
+            var layers = new List<Layer>();
+            foreach (var part in (text ?? "").Split(','))
+            {
+                var entry = part.Trim();
+                if (entry.Length == 0) continue;
+                var bits = entry.Split(':');
+                float start = 0f;
+                if ((bits.Length == 4 || bits.Length == 5 && Number(bits[4], 0f, 4f, out start)) && bits[0].Trim().Length > 0
+                    && Pitch(bits[1], out float pitch, out float pitchMax) && Number(bits[2], 0f, 2f, out float volume) && Number(bits[3], 0f, 4f, out float seconds))
+                    layers.Add(new Layer { Name = bits[0].Trim(), Pitch = pitch, PitchMax = pitchMax, Volume = volume, Seconds = seconds, Start = start });
+                else
+                    warnings.Add($"\"{entry}\" is not name:pitch:volume:seconds or name:pitch:volume:seconds:start (pitch 0 to 3 or a range like 2.8-3, volume 0 to 2, seconds and start 0 to 4), skipped");
+            }
+            return layers;
+        }
+
+        // one pitch, or a range "low-high" within 0.1 to 3
+        private static bool Pitch(string text, out float low, out float high)
+        {
+            var range = text.Split('-');
+            if (range.Length == 1)
+            {
+                bool ok = Number(range[0], 0f, 3f, out low);
+                high = low;
+                return ok;
+            }
+            low = high = 0f;
+            return range.Length == 2 && Number(range[0], 0.1f, 3f, out low) && Number(range[1], 0.1f, 3f, out high) && high >= low;
+        }
+
+        private static bool Number(string text, float min, float max, out float value) =>
+            float.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out value) && value >= min && value <= max;
 
         // one clip of a game sound, played straight into the sound effects mixer. the sound prefabs are network
         // objects, so the prefab itself is not spawned. pitch 0 keeps the sound's own pitch range, below 1 it plays
@@ -360,7 +465,8 @@ namespace Iaido_Katana
 
         private const float ClickSeconds = 0.12f;
 
-        internal static void PlayLayer(Vector3 point, string name, float pitch, float volume, float cut, bool spatial = false)
+        // start above 0 begins that many seconds into the clip, faded in over StartFade so it does not click
+        internal static void PlayLayer(Vector3 point, string name, float pitch, float volume, float cut, bool spatial = false, float start = 0f)
         {
             if (string.IsNullOrEmpty(name) || volume <= 0f || !ZNetScene.instance) return;
             var prefab = ZNetScene.instance.GetPrefab(name);
@@ -374,6 +480,7 @@ namespace Iaido_Katana
 
             var clip = sfx.m_audioClips[Random.Range(0, sfx.m_audioClips.Length)];
             if (!clip) return;
+            if (start >= clip.length - 0.05f) start = 0f;
             var holder = new GameObject("IaidoKatana_impact_sound");
             holder.transform.position = point;
             int count = Mathf.CeilToInt(volume);
@@ -398,35 +505,41 @@ namespace Iaido_Katana
                         source.SetCustomCurve(AudioSourceCurveType.CustomRolloff, template.GetCustomCurve(AudioSourceCurveType.CustomRolloff));
                 }
                 source.pitch = speed;
-                source.volume = each;
+                source.volume = start > 0f ? 0f : each;
                 source.clip = clip;
+                if (start > 0f) source.time = start;
                 if (count > 1) source.PlayScheduled(startAt);
                 else source.Play();
                 sources[i] = source;
             }
-            float length = clip.length / Mathf.Max(0.1f, speed);
-            if (cut > 0f && cut < length)
-            {
-                Plugin.Instance.StartCoroutine(FadeOut(sources, each, cut));
-                length = cut;
-            }
+            float length = (clip.length - start) / Mathf.Max(0.1f, speed);
+            if (cut <= 0f || cut >= length) cut = 0f;
+            else length = cut;
+            if (cut > 0f || start > 0f) Plugin.Instance.StartCoroutine(FadeOut(sources, each, cut, start > 0f ? StartFade : 0f, count > 1 ? 0.02f : 0f));
             Object.Destroy(holder, length + 0.1f);
         }
 
-        private static IEnumerator FadeOut(AudioSource[] sources, float volume, float cut)
+        private const float StartFade = 0.03f;
+
+        // a layer cut short fades out over its end (cut 0: not cut), one started inside its clip fades in first, from
+        // fadeInAt (the scheduled start of copies played together)
+        private static IEnumerator FadeOut(AudioSource[] sources, float volume, float cut, float fadeIn = 0f, float fadeInAt = 0f)
         {
             float fade = Mathf.Min(CrashFade, cut * 0.5f);
             float start = Time.unscaledTime;
             while (sources[0])
             {
                 float t = Time.unscaledTime - start;
+                bool done = cut > 0f && t >= cut;
+                float k = fadeIn > 0f ? Mathf.Clamp01((t - fadeInAt) / fadeIn) : 1f;
+                if (cut > 0f && t > cut - fade) k *= Mathf.Clamp01((cut - t) / fade);
                 foreach (var source in sources)
                 {
                     if (!source) continue;
-                    if (t >= cut) source.Stop();
-                    else source.volume = t < cut - fade ? volume : volume * (cut - t) / fade;
+                    if (done) source.Stop();
+                    else source.volume = volume * k;
                 }
-                if (t >= cut) yield break;
+                if (done || cut <= 0f && t >= fadeInAt + fadeIn) yield break;
                 yield return null;
             }
         }
