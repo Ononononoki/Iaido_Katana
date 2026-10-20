@@ -18,6 +18,7 @@ namespace Iaido_Katana
         internal const string HeavyTrigger = "swing_sledge";            // the heavy's state, its clip drawn from the scabbard
         internal const string HeavyOutTrigger = "greatsword_secondary"; // the state the heavy uses when the blade is already out
         private const string HeavyOutClip = "Iaido Heavy Out";
+        private const float CheckInterval = 1f;
 
         // the game's clip each of ours stands in for
         private static readonly Dictionary<string, string> Replaces = new Dictionary<string, string>
@@ -37,6 +38,9 @@ namespace Iaido_Katana
         {
             internal RuntimeAnimatorController Original;
             internal AnimatorOverrideController Override;
+            internal int Replaced;
+            internal float CheckAt;
+            internal readonly List<KeyValuePair<AnimationClip, AnimationClip>> Buffer = new List<KeyValuePair<AnimationClip, AnimationClip>>();
         }
 
         // one of our clips is playing (it is a swing like the game's own)
@@ -94,30 +98,116 @@ namespace Iaido_Katana
         // every frame for every player in view: our clips while the player holds a katana with Swing.CustomAnimations
         // on (and not the upper body swings), the game's otherwise. the override is made once per animator and then
         // switched. only our own override is ever taken off, a controller another mod put on stays
-        internal static void Step(Player player)
+        internal static void Step(Player player, bool validate = false)
         {
             if (Clips.Count == 0 || !player) return;
             var animator = AnimatorOf(player);
-            if (!animator || !animator.isInitialized) return;
+            if (!animator || !animator.isInitialized)
+            {
+                Trace(player, "animator not ready", false, false, null, null);
+                return;
+            }
             bool want = Moves.FullBody && IaiStance.HoldsKatana(player);
             var current = animator.runtimeAnimatorController;
             Swaps.TryGetValue(animator, out var swap);
             bool on = swap != null && swap.Override && current == swap.Override;
+            if (want != on && (player.InAttack() || AnimationSafety.Attacking(animator)))
+            {
+                Trace(player, "controller change deferred until attack ends", want, on, current, swap);
+                return;
+            }
+            Trace(player, "checked", want, on, current, swap);
+            if (want && on && (validate || Time.time >= swap.CheckAt)
+                && !player.InAttack() && !AnimationSafety.Attacking(animator))
+            {
+                swap.CheckAt = Time.time + CheckInterval;
+                int repaired = Repair(swap);
+                if (repaired > 0) Diagnostics.Snapshot($"repaired {repaired} custom animation mappings before an attack", player, animator);
+            }
             if (want == on) return;
             if (!want)
             {
                 Assign(animator, swap.Original);
                 return;
             }
-            if (!current) return;
-            if (swap == null || current != swap.Original)
+            if (!current)
             {
+                Trace(player, "no controller to build on", want, on, current, swap);
+                return;
+            }
+            bool invalid = swap != null && swap.Replaced > 0 && !swap.Override;
+            if (NeedsRebuild(swap, current))
+            {
+                if (invalid) Diagnostics.Snapshot("rebuilding an invalid animation override", player, animator);
                 if (swap != null) Swaps.Remove(animator);
                 swap = new Swap { Original = current, Override = Build(current, out int replaced) };
+                swap.Replaced = replaced;
                 Swaps.Add(animator, swap);
                 if (Plugin.LogCounters.Value) Plugin.Log.LogInfo($"own animation clips for {player.GetPlayerName()}: {replaced} of the game's clips replaced");
             }
             if (swap.Override) Assign(animator, swap.Override); // none when the controller has none of the clips
+        }
+
+        private static bool NeedsRebuild(Swap swap, RuntimeAnimatorController current) =>
+            swap == null || current != swap.Original || swap.Replaced > 0 && !swap.Override;
+
+        // repair only our clip slots while preserving every unrelated replacement
+        private static int Repair(Swap swap)
+        {
+            swap.Override.GetOverrides(swap.Buffer);
+            int repaired = 0;
+            for (int i = 0; i < swap.Buffer.Count; i++)
+            {
+                var pair = swap.Buffer[i];
+                if (!pair.Key || !Replaces.TryGetValue(pair.Key.name, out string name)
+                    || !Clips.TryGetValue(name, out var own) || !own || pair.Value == own) continue;
+                swap.Buffer[i] = new KeyValuePair<AnimationClip, AnimationClip>(pair.Key, own);
+                repaired++;
+            }
+            if (repaired > 0) swap.Override.ApplyOverrides(swap.Buffer);
+            return repaired;
+        }
+
+        private static bool _traceSeen;
+        private static string _traceWhy;
+        private static bool _traceWant;
+        private static bool _traceOn;
+        private static bool _traceOriginal;
+        private static bool _traceAlive;
+        private static RuntimeAnimatorController _traceController;
+        private static int _traceLines;
+        private const int TraceLimit = 300;
+        private const float TraceWindow = 60f;
+        private static float _traceSince;
+
+        // Debug.LogCounters: the local player's override state, logged each time any part of it changes (capped, so a
+        // state that flips every frame cannot flood the log)
+        private static void Trace(Player player, string why, bool want, bool on, RuntimeAnimatorController current, Swap swap)
+        {
+            if (!Plugin.LogCounters.Value || player != Player.m_localPlayer) return;
+            bool original = swap != null && current == swap.Original;
+            bool alive = swap != null && swap.Override;
+            if (_traceSeen && _traceWhy == why && _traceWant == want && _traceOn == on && _traceOriginal == original && _traceAlive == alive && _traceController == current) return;
+            _traceSeen = true;
+            _traceWhy = why;
+            _traceWant = want;
+            _traceOn = on;
+            _traceOriginal = original;
+            _traceAlive = alive;
+            _traceController = current;
+            string message = $"clip swap: {why}, katana held {want}, own clips on {on}, controller {(current ? current.name : "none")}{(original ? " (the game's)" : "")}, own override {(swap == null ? "not built" : alive ? "alive" : "destroyed")}";
+            Diagnostics.Remember(message);
+            if (Time.time - _traceSince >= TraceWindow)
+            {
+                _traceSince = Time.time;
+                _traceLines = 0;
+            }
+            if (++_traceLines > TraceLimit)
+            {
+                if (_traceLines == TraceLimit + 1) Plugin.Log.LogInfo($"clip swap: {TraceLimit} state lines this minute, recent history still retained");
+                return;
+            }
+            Plugin.Log.LogInfo(message);
         }
 
         // the game's controller with our clips in place of the ones they stand in for, or null when it has none of them
@@ -125,7 +215,8 @@ namespace Iaido_Katana
         {
             var over = new AnimatorOverrideController(original) { name = "IaidoKatana_clips" };
             var list = new List<KeyValuePair<AnimationClip, AnimationClip>>(over.overridesCount);
-            over.GetOverrides(list);
+            if (original is AnimatorOverrideController inherited) inherited.GetOverrides(list);
+            else over.GetOverrides(list);
             replaced = 0;
             for (int i = 0; i < list.Count; i++)
             {
@@ -139,11 +230,20 @@ namespace Iaido_Katana
             return over;
         }
 
-        // a new controller resets the animator's parameters and starts every layer over, so the parameters are carried
-        // over (the weapon's idle and walk, the speeds, the flags the game set once) and each layer goes on in the state,
-        // time and weight it had (equipping the katana mid-walk does not snap)
+        // assigning an override preserves state, but restoring a plain controller requires replaying the layers
+        private static RuntimeAnimatorController BaseOf(RuntimeAnimatorController controller)
+        {
+            while (controller is AnimatorOverrideController over) controller = over.runtimeAnimatorController;
+            return controller;
+        }
+
         private static void Assign(Animator animator, RuntimeAnimatorController controller)
         {
+            if (controller is AnimatorOverrideController && BaseOf(animator.runtimeAnimatorController) == BaseOf(controller))
+            {
+                animator.runtimeAnimatorController = controller;
+                return;
+            }
             int layers = animator.layerCount;
             var states = new int[layers];
             var times = new float[layers];

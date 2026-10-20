@@ -20,6 +20,7 @@ namespace Iaido_Katana
         private static bool _swinging;
         private static bool _swingSeen;
         private static float _swingStart;
+        private static readonly AnimationLease _lease = new AnimationLease();
 
         private static Player _player;
         private static Character _attacker;
@@ -41,17 +42,38 @@ namespace Iaido_Katana
         internal static void StepSwing(Player player, Animator animator, bool paused)
         {
             if (!_swinging) return;
+            if (!_lease.Matches(player, animator)) { EndSwing(); return; }
             if (Time.time - _swingStart > SwingMaxTime || (!player.InAttack() && (_swingSeen || Time.time - _swingStart > 0.3f)))
             {
                 EndSwing();
                 return;
             }
             if (player.InAttack()) _swingSeen = true;
-            if (!paused) animator.speed = Plugin.CounterAnimationSpeed.Value;
+            if (!paused) _lease.Write(Plugin.CounterAnimationSpeed.Value);
         }
 
         // a real swing took over, or the counter swing is done
-        internal static void EndSwing() => _swinging = false;
+        internal static void EndSwing()
+        {
+            if (_swinging) Diagnostics.Record("counter animation released its speed");
+            _swinging = false;
+            _lease.Clear();
+        }
+
+        internal static bool OwnsSwing => _swinging && _lease.Current;
+
+        internal static void RecordGameSpeed(float speed) { if (_swinging) _lease.GameSpeed(speed); }
+
+        internal static void Cancel(Player player)
+        {
+            if (_lease.Player == player) EndSwing();
+            if (_player != player) return;
+            _id++;
+            _player = null;
+            _attacker = null;
+            AlsoParried.Clear();
+            Diagnostics.Record("pending counter canceled on weapon removal");
+        }
 
         internal static void Start(Player player, Character attacker, bool ranged)
         {
@@ -66,6 +88,8 @@ namespace Iaido_Katana
                 return;
             }
             AlsoParried.Clear();
+            SwingWarp.Cancel("parry counter took over", false);
+            EndSwing();
             _player = player;
             _attacker = attacker;
             _ranged = ranged;
@@ -97,6 +121,7 @@ namespace Iaido_Katana
         {
             var attack = player.GetCurrentWeapon()?.m_shared.m_attack;
             if (attack == null || string.IsNullOrEmpty(attack.m_attackAnimation)) return false;
+            _lease.Begin(player, null, false);
             ZAnim(player).SetTrigger(attack.m_attackChainLevels > 1 ? attack.m_attackAnimation + "0" : attack.m_attackAnimation);
             _swinging = true;
             _swingSeen = false;

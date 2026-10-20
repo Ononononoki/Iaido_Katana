@@ -23,6 +23,7 @@
   <ItemGroup>
     <Compile Remove="test\**" />
     <Compile Remove="devtools\**" />
+    <Compile Remove="diagnostics\**" />
     <Reference Include="BepInEx"><HintPath>$(ProfilePath)\BepInEx\core\BepInEx.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="0Harmony"><HintPath>$(ProfilePath)\BepInEx\core\0Harmony.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Jotunn"><HintPath>$(ProfilePath)\BepInEx\plugins\ValheimModding-Jotunn\Jotunn.dll</HintPath><Private>false</Private></Reference>

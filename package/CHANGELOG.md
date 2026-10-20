@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.2
+
+- Animation speed control releases safely after interrupted attacks and weapon changes, while preserving hit stop.
+- Lost or changed custom-animation overrides can recover.
+- Animation-controller changes wait for attacks to finish and preserve the current animation when switching weapons.
+- Stalled animation speed control can release without repeating damage.
+- Optional diagnostics retain recent animation events throughout long sessions.
+
 ## 0.3.1
 
 - A katana parry never staggers you anymore. Running out of stamina still breaks it. New setting `Parry.NoStagger`.

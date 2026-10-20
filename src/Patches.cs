@@ -122,6 +122,8 @@ namespace Iaido_Katana
             // the flametal katana's heavy attack is the thunderclap, not a game attack
             private static bool Prefix(Humanoid __instance, bool secondaryAttack, ref bool __result)
             {
+                if (__instance is Player player && player == Player.m_localPlayer && Katana.IsKatana(player.GetCurrentWeapon()))
+                    ClipSwap.Step(player, true);
                 if (!Thunderclap.TryStart(__instance, secondaryAttack)) return true;
                 __result = false;
                 return false;
@@ -140,7 +142,7 @@ namespace Iaido_Katana
                 {
                     // on the upper body layer the legs keep walking: an even pace, and every client learns it is the heavy
                     if (secondaryAttack && __instance is Player player) IaiStance.StartHeavy(player);
-                    SwingWarp.BeginEven(key, ChainLevel(attack), secondaryAttack ? Plugin.HeavyDuration.Value : 0f);
+                    SwingWarp.BeginEven(key, ChainLevel(attack), secondaryAttack ? Plugin.HeavyDuration.Value : 0f, (Player)__instance, attack);
                     return;
                 }
                 // a full-body cut keeps its strike long enough to be seen (about 80 ms instead of 0.1.1's 45)
@@ -149,7 +151,7 @@ namespace Iaido_Katana
                 SwingWarp.Begin(key,
                     secondaryAttack ? Plugin.HeavySpeed.Value : 1f,
                     secondaryAttack ? Plugin.HeavyStrikeBoost.Value : full ? Plugin.FullBodyStrikeBoost.Value : Plugin.NormalStrikeBoost.Value,
-                    secondaryAttack ? Plugin.HeavyDuration.Value : 0f);
+                    secondaryAttack ? Plugin.HeavyDuration.Value : 0f, (Player)__instance, attack);
             }
         }
 
@@ -259,7 +261,7 @@ namespace Iaido_Katana
             private static bool Prefix(Humanoid __instance)
             {
                 if (__instance != Player.m_localPlayer) return true;
-                if (Counter.AnimationPlaying && !SwingWarp.Active)
+                if (Counter.OwnsSwing && !SwingWarp.Active)
                 {
                     Counter.OnSwingHit();
                     return false;
@@ -288,6 +290,32 @@ namespace Iaido_Katana
                 Counter.StepSwing(player, animator, paused);
                 SwingWarp.Step(player, animator, __0, paused);
                 Diagnostics.Step(player, animator);
+                Diagnostics.Watch(player, animator);
+            }
+        }
+
+        // Debug.LogCounters: the swing warp, the counter swing and the animator when the local player's katana is taken
+        // out of the hand (put away, or swapped for another weapon)
+        [HarmonyPatch(typeof(Humanoid), nameof(Humanoid.UnequipItem))]
+        private static class KatanaUnequipTrace
+        {
+            private static readonly AccessTools.FieldRef<Character, Animator> AnimatorOf = AccessTools.FieldRefAccess<Character, Animator>("m_animator");
+
+            private static void Prefix(Humanoid __instance, ItemDrop.ItemData item, out bool __state)
+            {
+                __state = __instance == Player.m_localPlayer && Katana.IsKatana(item) && ReferenceEquals(__instance.GetCurrentWeapon(), item);
+                if (!__state) return;
+                var animator = AnimatorOf(__instance);
+                if (Plugin.LogCounters.Value)
+                    Plugin.Log.LogInfo($"katana taken out of the hand: in attack {__instance.InAttack()}, swing warp {SwingWarp.Active}, counter swing {Counter.AnimationPlaying}, " +
+                                       $"animator speed {(animator ? animator.speed : -1f):0.00}, own clips {ClipSwap.On((Player)__instance)}");
+            }
+
+            private static void Postfix(Humanoid __instance, ItemDrop.ItemData item, bool __state)
+            {
+                if (!__state || ReferenceEquals(__instance.GetCurrentWeapon(), item)) return;
+                SwingWarp.Cancel("katana removed", SwingWarp.Active);
+                Counter.Cancel((Player)__instance);
             }
         }
 
@@ -348,7 +376,9 @@ namespace Iaido_Katana
         {
             private static bool Prefix(CharacterAnimEvent __instance, float __0)
             {
-                if (!SwingWarp.OverridesSpeedEvents || AnimCharacter(__instance) != Player.m_localPlayer) return true;
+                if (AnimCharacter(__instance) != Player.m_localPlayer) return true;
+                Counter.RecordGameSpeed(__0);
+                if (!SwingWarp.OverridesSpeedEvents) return true;
                 SwingWarp.RecordGameSpeed(__0);
                 return false;
             }

@@ -21,7 +21,7 @@ namespace Iaido_Katana
     {
         public const string ModGuid = "onononoki.Iaido_Katana";
         public const string ModName = "Iaido_Katana";
-        public const string ModVersion = "0.3.1";
+        public const string ModVersion = "0.3.2";
 
         internal static ManualLogSource Log;
         internal static ConfigEntry<bool> CounterEnabled;

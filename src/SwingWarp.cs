@@ -50,6 +50,8 @@ namespace Iaido_Katana
         private static Animator _animator;
         private static bool _cleared;
         private static bool _even;
+        private static bool _foreignLogged;
+        private static readonly AnimationLease _lease = new AnimationLease();
 
         internal static bool Active => _active && !_hitDone;
 
@@ -59,8 +61,10 @@ namespace Iaido_Katana
 
         // pace speeds up the whole way to the hit, strikeBoost only the strike (the windup slows down to match).
         // total above 0 sets the length of the whole swing instead, by changing only the raise
-        internal static void Begin(string key, float pace, float strikeBoost, float total)
+        internal static void Begin(string key, float pace, float strikeBoost, float total, Player player, Attack attack)
         {
+            Cancel("new katana attack", false);
+            _lease.Begin(player, attack, true);
             _key = key;
             _pace = pace;
             _strikeBoost = strikeBoost;
@@ -73,49 +77,76 @@ namespace Iaido_Katana
             _animator = null;
             _cleared = false;
             _even = false;
+            _foreignLogged = false;
             _active = true;
+            Diagnostics.Record($"swing {_key} owns its attack speed");
         }
 
         // an upper body swing (Swing.UpperBody): the legs walk on the same animator, so its speed stays even up to the hit
         // (a slow windup and fast strike would make the walk stutter, the katana's own cut keys give that shape). a normal
         // swing reaches its hit as late as the greatsword's did, the heavy fills total seconds
-        internal static void BeginEven(string key, int chain, float total)
+        internal static void BeginEven(string key, int chain, float total, Player player, Attack attack)
         {
             float hit = HitTimes.TryGetValue(key, out float h) ? h : 0.3f;
             float pace = total > 0f ? 1f : hit / EvenHitSeconds[Mathf.Clamp(chain, 0, EvenHitSeconds.Length - 1)];
-            Begin(key, pace, 1f, total);
+            Begin(key, pace, 1f, total, player, attack);
             _even = true;
         }
 
         internal static void OnHit()
         {
             if (!_active || _hitDone) return;
+            if (!_lease.Current) { Cancel("hit belongs to another attack"); return; }
             _hitDone = true;
             _hitTime = Time.time;
             // hand the animation back at the speed the game wanted, otherwise the recovery would play fast too
-            if (_animator) _animator.speed = _gameSpeed;
+            _lease.Restore();
             if (HitTimes.ContainsKey(_key)) return;
             HitTimes[_key] = _animTime;
             if (Plugin.LogCounters.Value) Plugin.Log.LogInfo($"learned swing timing {_key}: hit after {_animTime:0.00} s of animation");
         }
 
         // the game's Speed animation events are held back until the hit, while this swing sets the speed
-        internal static bool OverridesSpeedEvents => Active && _animator;
+        internal static bool OverridesSpeedEvents
+        {
+            get
+            {
+                if (_active && !_lease.Current) Cancel("speed event belongs to another attack");
+                return Active && _animator;
+            }
+        }
 
-        internal static void RecordGameSpeed(float speed) => _gameSpeed = speed;
+        internal static void RecordGameSpeed(float speed) { _gameSpeed = speed; _lease.GameSpeed(speed); }
+
+        internal static void Cancel(string why, bool snapshot = true)
+        {
+            if (!_active) return;
+            if (snapshot) Diagnostics.Snapshot($"swing {_key} released, {why}", _lease.Player, _lease.Animator);
+            else Diagnostics.Record($"swing {_key} released, {why}");
+            _active = false;
+            _lease.Clear();
+            _animator = null;
+        }
 
         // runs every fixed step for the local player. paused means a freeze frame is holding the animation
         internal static void Step(Player player, Animator animator, float dt, bool paused)
         {
             if (!_active) return;
+            if (!_lease.Matches(player, animator)) { Cancel("attack, weapon or player changed"); return; }
             // the game reads "in attack" from the animator, which needs a frame or two to enter the swing
             if (!player.InAttack())
             {
-                if (!_seenAttack && Time.time - _startTime <= 0.5f) return;
-                End();
+                if (!_seenAttack && Time.time - _startTime <= AnimationSafety.EntryGrace) return;
+                End(animator);
                 return;
             }
             _seenAttack = true;
+            if (_lease.Stalled(dt, paused)) { Cancel("owned animation made no progress"); return; }
+            if (!_foreignLogged && Plugin.LogCounters.Value && !Katana.IsKatana(player.GetCurrentWeapon()))
+            {
+                _foreignLogged = true;
+                Plugin.Log.LogInfo($"swing {_key} still warping with {player.GetCurrentWeapon()?.m_shared.m_name ?? "no weapon"} in hand: animator speed {animator.speed:0.00}, hit done {_hitDone}, animation time {_animTime:0.00} s");
+            }
             if (paused) return;
 
             if (!_hitDone)
@@ -124,17 +155,20 @@ namespace Iaido_Katana
                 if (speed > 0f)
                 {
                     _animator = animator;
-                    animator.speed = speed;
+                    _lease.Write(speed);
                 }
-                else if (!_cleared) animator.speed = 1f; // once, clears a speed left over from the counter swing
+                else if (!_cleared) _lease.Restore();
             }
             _cleared = true;
             _animTime += dt * animator.speed;
         }
 
-        private static void End()
+        private static void End(Animator animator)
         {
             _active = false;
+            _lease.Clear();
+            _animator = null;
+            if (!_hitDone && Plugin.LogCounters.Value) Plugin.Log.LogInfo($"swing {_key} cut short, owned speed released, animator speed {animator.speed:0.00}");
             float total = Time.time - _startTime;
             if (_hitDone && _seenAttack) AfterHitTimes[_key] = Time.time - _hitTime;
             if (Plugin.LogCounters.Value)
