@@ -11,6 +11,9 @@ namespace Iaido_Katana
         internal const string SteelToken = "$item_iaidokatana_steel";
         internal const string FlametalPrefab = "IaidoKatanaFlametal";
         internal const string FlametalToken = "$item_iaidokatana_flametal";
+        // the Deep North katana, the daisho's katana: it comes with its wakizashi (see Daisho)
+        internal const string ThunderbloodPrefab = "IaidoKatanaThunderblood";
+        internal const string ThunderbloodToken = "$item_iaidokatana_thunderblood";
         internal const float VanillaParryWindow = 0.25f;
 
         // item, amount to craft, extra amount per upgrade level (the game charges per level × (quality - 1), 4× at level 4).
@@ -34,17 +37,29 @@ namespace Iaido_Katana
             ("GemstoneBlue", 1, 0)
         };
 
+        // bloodgold bars (the blade), barka branches (the scabbard and wrap), a thunderblood essence (the lightning), made
+        // at the Black Forge like the bloodgold greatsword it is the katana of
+        internal static readonly (string item, int amount, int perLevel)[] ThunderbloodRecipe =
+        {
+            ("Gold", 30, 10),
+            ("BarkaBranch", 10, 2),
+            ("OrbThunderBlood", 1, 1)
+        };
+
         // the battle idol the Forge of Potential takes to refine a katana past level 4, the tier of the game's swords of
         // its biome. it is hidden while crafting, and the forge skips a recipe without one
         internal const string SteelIdol = "Upgrader4Weapon";     // black metal
         internal const string FlametalIdol = "Upgrader6Weapon";  // flametal
+        internal const string ThunderbloodIdol = "Upgrader7Weapon"; // bloodgold
 
         private static readonly Func<Humanoid, ItemDrop.ItemData> GetCurrentBlocker =
             AccessTools.MethodDelegate<Func<Humanoid, ItemDrop.ItemData>>(AccessTools.Method(typeof(Humanoid), "GetCurrentBlocker"));
         private static readonly AccessTools.FieldRef<Humanoid, float> BlockTimer = AccessTools.FieldRefAccess<Humanoid, float>("m_blockTimer");
 
         internal static bool IsKatana(ItemDrop.ItemData item) =>
-            item?.m_shared != null && (item.m_shared.m_name == SteelToken || item.m_shared.m_name == FlametalToken);
+            item?.m_shared != null && (item.m_shared.m_name == SteelToken || item.m_shared.m_name == FlametalToken || item.m_shared.m_name == ThunderbloodToken);
+
+        internal static bool IsThunderblood(ItemDrop.ItemData item) => item?.m_shared != null && item.m_shared.m_name == ThunderbloodToken;
 
         // 40% of a black metal sword, a guard that barely blocks, a parry that stops any normal plains hit, little knockback
         internal static void ApplySteelStats(ItemDrop.ItemData.SharedData shared)
@@ -65,6 +80,21 @@ namespace Iaido_Katana
             shared.m_damages = new HitData.DamageTypes { m_slash = 60f, m_lightning = 15f };
             shared.m_damagesPerLevel = new HitData.DamageTypes { m_slash = 2.4f, m_lightning = 0.6f };
             shared.m_blockPower = 13f;
+            shared.m_blockPowerPerLevel = 1f;
+            shared.m_timedBlockBonus = 13f;
+            shared.m_deflectionForce = 5f;
+            shared.m_deflectionForcePerLevel = 0f;
+            shared.m_maxQuality = 4;
+        }
+
+        // the Deep North katana: 100 slash and 25 lightning (the bloodgold greatsword has 220 and 45), a guard that barely
+        // blocks but whose parry stops any normal Deep North hit (20 x 13 = 260 against the biggest 220 to 290), and the
+        // greatsword's thunderblood trait of more damage the more health is missing, which its attacks keep from the clone
+        internal static void ApplyThunderbloodStats(ItemDrop.ItemData.SharedData shared)
+        {
+            shared.m_damages = new HitData.DamageTypes { m_slash = 100f, m_lightning = 25f };
+            shared.m_damagesPerLevel = new HitData.DamageTypes { m_slash = 4.5f, m_lightning = 2f };
+            shared.m_blockPower = 20f;
             shared.m_blockPowerPerLevel = 1f;
             shared.m_timedBlockBonus = 13f;
             shared.m_deflectionForce = 5f;

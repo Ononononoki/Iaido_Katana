@@ -21,7 +21,7 @@ namespace Iaido_Katana
     {
         public const string ModGuid = "onononoki.Iaido_Katana";
         public const string ModName = "Iaido_Katana";
-        public const string ModVersion = "0.3.2";
+        public const string ModVersion = "0.4.0";
 
         internal static ManualLogSource Log;
         internal static ConfigEntry<bool> CounterEnabled;
@@ -38,6 +38,17 @@ namespace Iaido_Katana
         internal static ConfigEntry<float> SteelChop;
         internal static ConfigEntry<int> SteelChopTier;
         internal static ConfigEntry<float> FlametalChop;
+        internal static ConfigEntry<float> ThunderbloodChop;
+        internal static ConfigEntry<int> ThunderbloodChopTier;
+        // the daisho: the Thunderblood Katana's wakizashi, its parry with both blades and the Ranbu
+        internal static ConfigEntry<bool> DaishoOn;
+        internal static ConfigEntry<float> CrescentKatanaShare;
+        internal static ConfigEntry<float> CrescentWakizashiShare;
+        internal static ConfigEntry<float> ParryWaveShare;
+        internal static ConfigEntry<float> WakizashiParryShare;
+        internal static ConfigEntry<bool> ChopBaseProtection;
+        internal static ConfigEntry<float> RanbuTempo;
+        internal static ConfigEntry<float> RanbuSeconds;
         internal static ConfigEntry<int> FlametalChopTier;
         internal static ConfigEntry<float> BlockBonusMax;
         internal static ConfigEntry<float> ReflectMultiplier;
@@ -60,6 +71,8 @@ namespace Iaido_Katana
         internal static ConfigEntry<float> SwingStamina;
         internal static ConfigEntry<float> FlametalSwingStamina;
         internal static ConfigEntry<float> FlametalHeavyStamina;
+        internal static ConfigEntry<float> ThunderbloodSwingStamina;
+        internal static ConfigEntry<float> ThunderbloodHeavyStamina;
 
         internal static ConfigEntry<float> NormalRange;
         internal static ConfigEntry<float> NormalAngle;
@@ -72,6 +85,8 @@ namespace Iaido_Katana
         private static readonly List<ItemDrop.ItemData.SharedData> KatanaShared = new List<ItemDrop.ItemData.SharedData>();
         // the flametal katana's item data, marked when it is made (its name token is only set later by jotunn)
         private static readonly HashSet<ItemDrop.ItemData.SharedData> FlametalShared = new HashSet<ItemDrop.ItemData.SharedData>();
+        // and the Deep North katana's
+        private static readonly HashSet<ItemDrop.ItemData.SharedData> ThunderbloodShared = new HashSet<ItemDrop.ItemData.SharedData>();
 
         // by its name, like Katana.IsKatana: in the game an item in the inventory can carry a copy of its prefab's data
         internal static bool IsFlametal(ItemDrop.ItemData item) => item?.m_shared != null && item.m_shared.m_name == Katana.FlametalToken;
@@ -159,6 +174,7 @@ namespace Iaido_Katana
         private static readonly Color SteelTint = new Color(0.62f, 0.64f, 0.72f);
         // placeholder look of the ashlands katana: slayer with a cold blue cast for the lightning
         private static readonly Color FlametalTint = new Color(0.7f, 0.78f, 1f);
+        private static readonly Color ThunderbloodTint = new Color(1f, 0.62f, 0.6f);
 
         private void Awake()
         {
@@ -199,6 +215,26 @@ namespace Iaido_Katana
                 new ConfigDescription("Chop damage of the Flametal Katana's counter cut and Thunderclap dash (the Black Metal Axe has 60).", new AcceptableValueRange<float>(0f, 200f), sync));
             FlametalChopTier = _fixed.Bind("Chop", "FlametalToolTier", 4,
                 new ConfigDescription("Tool tier of that chop (the Black Metal Axe has 4).", new AcceptableValueRange<int>(0, 10), sync));
+            ThunderbloodChop = _fixed.Bind("Chop", "ThunderbloodChop", 90f,
+                new ConfigDescription("Chop damage of the Thunderblood Katana's counter cut (the Nord Axe has 90).", new AcceptableValueRange<float>(0f, 200f), sync));
+            ThunderbloodChopTier = _fixed.Bind("Chop", "ThunderbloodToolTier", 6,
+                new ConfigDescription("Tool tier of that chop (the Nord Axe has 6).", new AcceptableValueRange<int>(0, 10), sync));
+            DaishoOn = _fixed.Bind("Daisho", "Enabled", true,
+                new ConfigDescription("The Thunderblood Katana is worn with a wakizashi: its parry cuts with both blades and its heavy attack is the Ranbu. Off: it parries and attacks like the other katanas.", null, sync));
+            CrescentKatanaShare = _fixed.Bind("Daisho", "RanbuKatanaShare", 0.6f,
+                new ConfigDescription("What each flying crescent of the Ranbu's katana cuts does to a creature it passes, as a share of the katana's hit (once per cut).", new AcceptableValueRange<float>(0f, 3f), sync));
+            CrescentWakizashiShare = _fixed.Bind("Daisho", "RanbuWakizashiShare", 0.25f,
+                new ConfigDescription("The same for the wakizashi's cuts (half frost, which slows).", new AcceptableValueRange<float>(0f, 3f), sync));
+            ParryWaveShare = _fixed.Bind("Daisho", "ParryWaveShare", 0.5f,
+                new ConfigDescription("The daisho parry's two cuts send flying waves like the Ranbu's. What each does to a creature it passes, as a share of a Ranbu wave of the same blade.", new AcceptableValueRange<float>(0f, 3f), sync));
+            WakizashiParryShare = _fixed.Bind("Daisho", "WakizashiParryShare", 0.5f,
+                new ConfigDescription("What the wakizashi's hit of the daisho parry does, as a share of the katana's counter.", new AcceptableValueRange<float>(0f, 3f), sync));
+            ChopBaseProtection = _fixed.Bind("Chop", "BaseProtection", true,
+                new ConfigDescription("The Ranbu's waves chop nothing that stands inside a workbench's build range.", null, sync));
+            RanbuTempo = _fixed.Bind("Daisho", "RanbuTempo", 0.45f,
+                new ConfigDescription("How fast the Ranbu's first cut plays, as a share of the move's even speed. The cuts build up slowly and the last ones are the fastest (1 = even speed).", new AcceptableValueRange<float>(0.3f, 1f), sync));
+            RanbuSeconds = _fixed.Bind("Daisho", "RanbuSeconds", 5f,
+                new ConfigDescription("How long the whole Ranbu takes. The cuts are stretched, the draw before them and the end after them keep their speed.", new AcceptableValueRange<float>(2.7f, 8f), sync));
             BlockBonusMax = Config.Bind("Counter", "BlockSkillBonus", 1.5f,
                 new ConfigDescription("Extra counter damage from Block skill: 1x at skill 0, rising to this at skill 100.",
                     new AcceptableValueRange<float>(1f, 3f), sync));
@@ -255,6 +291,13 @@ namespace Iaido_Katana
             FlametalHeavyStamina = Config.Bind("Counter", "FlametalHeavyStamina", 60f,
                 new ConfigDescription("Stamina cost of the Flametal Katana's heavy attack (HeavyStamina is the Steel Katana's).", new AcceptableValueRange<float>(0f, 100f), sync));
             FlametalHeavyStamina.SettingChanged += (s, e) => ApplyAttackSettings();
+            // the Deep North katana hits harder again, and its heavy attack is the Ranbu, the daisho's long flurry
+            ThunderbloodSwingStamina = _fixed.Bind("Counter", "ThunderbloodSwingStamina", 26f,
+                new ConfigDescription("Stamina cost of the Thunderblood Katana's normal swings.", new AcceptableValueRange<float>(0f, 100f), sync));
+            ThunderbloodSwingStamina.SettingChanged += (s, e) => ApplyAttackSettings();
+            ThunderbloodHeavyStamina = _fixed.Bind("Counter", "ThunderbloodHeavyStamina", 100f,
+                new ConfigDescription("Stamina cost of the Thunderblood Katana's heavy attack, the Ranbu.", new AcceptableValueRange<float>(0f, 200f), sync));
+            ThunderbloodHeavyStamina.SettingChanged += (s, e) => ApplyAttackSettings();
             // which swings the katanas play is set by the server, so every player sees the same, and applied when it arrives.
             // the katana's own swings and the one-handed movement are experimental, off by default (12 Oct: they felt
             // weightless and cut off from the body)
@@ -509,6 +552,11 @@ namespace Iaido_Katana
             PrefabManager.OnVanillaPrefabsAvailable -= AddItems;
             if (LogCounters.Value) LogHammerAnimations();
             AddKatana(Katana.SteelPrefab, "THSwordKrom", Katana.SteelToken, Katana.ApplySteelStats, "steel", SteelTint, "forge", 4, Katana.SteelRecipe, Katana.SteelIdol);
+            // the Deep North katana, a clone of the bloodgold greatsword with the thunderblood lightning (the slayer's
+            // clone if this game version has no such sword, so the item still exists)
+            string thunderBase = PrefabManager.Instance.GetPrefab("THSwordGold_BloodLightning") ? "THSwordGold_BloodLightning" : "THSwordKrom";
+            if (thunderBase != "THSwordGold_BloodLightning") Log.LogWarning("THSwordGold_BloodLightning not found, the Thunderblood Katana is made from THSwordKrom");
+            AddKatana(Katana.ThunderbloodPrefab, thunderBase, Katana.ThunderbloodToken, Katana.ApplyThunderbloodStats, "thunderblood", ThunderbloodTint, "blackforge", 4, Katana.ThunderbloodRecipe, Katana.ThunderbloodIdol);
             AddKatana(Katana.FlametalPrefab, "THSwordSlayer", Katana.FlametalToken, Katana.ApplyFlametalStats, "flametal", FlametalTint, "blackforge", 3, Katana.FlametalRecipe, Katana.FlametalIdol);
         }
 
@@ -530,6 +578,7 @@ namespace Iaido_Katana
             Katana.BaseBlockPower[token] = basePower;
             KatanaShared.Add(shared);
             if (prefabName == Katana.FlametalPrefab) FlametalShared.Add(shared);
+            if (prefabName == Katana.ThunderbloodPrefab) ThunderbloodShared.Add(shared);
             ApplyAttackSettings();
             BaseMoves[shared] = new BaseMoveset
             {
@@ -545,7 +594,8 @@ namespace Iaido_Katana
 
             bool hasIdol = PrefabManager.Instance.GetPrefab(idol);
             if (!hasIdol) Log.LogWarning($"{prefabName} recipe: idol '{idol}' does not exist in this game version");
-            var requirements = recipe.Select(r => new RequirementConfig(r.item, r.amount, r.perLevel, true)).ToList();
+            // an item that does not exist in this game version is left out of the recipe, so the katana can still be crafted
+            var requirements = recipe.Where(r => PrefabManager.Instance.GetPrefab(r.item)).Select(r => new RequirementConfig(r.item, r.amount, r.perLevel, true)).ToList();
             if (hasIdol) requirements.Add(new RequirementConfig(idol, 1, 0, false)); // spent, never given back
 
             var config = new ItemConfig
@@ -635,9 +685,10 @@ namespace Iaido_Katana
                 var heavy = shared.m_secondaryAttack;
                 if (normal == null || heavy == null) continue;
                 bool flametal = FlametalShared.Contains(shared);
+                bool thunderblood = ThunderbloodShared.Contains(shared);
                 heavy.m_damageMultiplier = HeavyDamageMultiplier.Value;
-                heavy.m_attackStamina = flametal ? FlametalHeavyStamina.Value : HeavyStamina.Value;
-                normal.m_attackStamina = flametal ? FlametalSwingStamina.Value : SwingStamina.Value;
+                heavy.m_attackStamina = thunderblood ? ThunderbloodHeavyStamina.Value : flametal ? FlametalHeavyStamina.Value : HeavyStamina.Value;
+                normal.m_attackStamina = thunderblood ? ThunderbloodSwingStamina.Value : flametal ? FlametalSwingStamina.Value : SwingStamina.Value;
                 normal.m_attackRange = NormalRange.Value;
                 normal.m_attackAngle = NormalAngle.Value;
                 normal.m_attackRayWidth = NormalRayWidth.Value;
@@ -709,6 +760,8 @@ namespace Iaido_Katana
             {
                 ["item_iaidokatana_steel"] = "Steel Katana",
                 ["item_iaidokatana_steel_desc"] = "Folded steel in a lacquered scabbard. Weak in an open fight. A perfect parry strikes back on its own. Its parry window is slightly tighter than other weapons'.",
+                ["item_iaidokatana_thunderblood"] = "Thunderblood Katana",
+                ["item_iaidokatana_thunderblood_desc"] = "A katana of bloodgold and red lightning, worn with a short wakizashi at the other hip. It hits harder the more health is missing. A perfect parry strikes back with both blades. Its parry window is slightly tighter than other weapons'.",
                 ["item_iaidokatana_flametal"] = "Flametal Katana",
                 ["item_iaidokatana_flametal_desc"] = "Flametal folded around an iolite core. Lightning runs along the edge. A perfect parry strikes back on its own. Its parry window is slightly tighter than other weapons'."
             });

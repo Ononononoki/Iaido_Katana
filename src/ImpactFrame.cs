@@ -50,10 +50,11 @@ namespace Iaido_Katana
             ? Plugin.ImpactInkSeconds.Value + 0.03f : 0f;
 
         // crash false leaves out the metal crash (the thunderclap has its own thunder)
-        internal static void Play(Vector3 point, bool crash = true)
+        // flip turns the ink picture's two tones over (the daisho parry's second beat)
+        internal static void Play(Vector3 point, bool crash = true, bool flip = false)
         {
             if (!Plugin.ImpactEnabled.Value) return;
-            if (Plugin.ImpactInk.Value && Plugin.ImpactInkSeconds.Value > 0f) Plugin.Instance.StartCoroutine(InkFrame(++_inkId, point));
+            if (Plugin.ImpactInk.Value && Plugin.ImpactInkSeconds.Value > 0f) Plugin.Instance.StartCoroutine(InkFrame(++_inkId, point, flip));
             else WhiteFlash();
             Flash();
             Shake();
@@ -89,7 +90,7 @@ namespace Iaido_Katana
 
         // the ink frame: one frame after the hit (so its sparks are in the picture) the camera's view is drawn small,
         // without the hud, turned into two-tone ink with a streak through the enemy, and held still for a moment
-        private static IEnumerator InkFrame(int id, Vector3 point)
+        private static IEnumerator InkFrame(int id, Vector3 point, bool flip = false)
         {
             EnsureOverlay();
             yield return null;
@@ -131,7 +132,7 @@ namespace Iaido_Katana
             var cut = screen.z > 0f && Plugin.ImpactInkCut.Value
                 ? new Vector2(screen.x / Mathf.Max(1, Screen.width) * w, screen.y / Mathf.Max(1, Screen.height) * h)
                 : new Vector2(-1f, -1f);
-            Inkify(pixels, w, h, cut, Plugin.ImpactInkInvert.Value);
+            Inkify(pixels, w, h, cut, Plugin.ImpactInkInvert.Value != flip);
             _inkPicture.SetPixels32(pixels);
             _inkPicture.Apply(false);
             _ink.texture = _inkPicture;

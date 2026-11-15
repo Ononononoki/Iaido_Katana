@@ -8,7 +8,7 @@ namespace Iaido_Katana
     // the iai stance: while a player blocks with a katana, the upper body turns left and the arms hold the sword at
     // the left hip, edge up, like a sword in its scabbard. it is laid over the game's own block animation after the
     // animator, for every player in view, so friends see it too. only bones are turned, nothing is sent
-    internal static class IaiStance
+    internal static partial class IaiStance
     {
         private static readonly AccessTools.FieldRef<Character, Animator> AnimatorOf = AccessTools.FieldRefAccess<Character, Animator>("m_animator");
         private static readonly AccessTools.FieldRef<Humanoid, VisEquipment> VisOf = AccessTools.FieldRefAccess<Humanoid, VisEquipment>("m_visEquipment");
@@ -37,6 +37,11 @@ namespace Iaido_Katana
         private static readonly CrouchSettings Crouch = new CrouchSettings();
         private static readonly int SteelHash = Katana.SteelPrefab.GetStableHashCode();
         private static readonly int FlametalHash = Katana.FlametalPrefab.GetStableHashCode();
+        private static readonly int ThunderbloodHash = Katana.ThunderbloodPrefab.GetStableHashCode();
+
+        // which katana an item is, for the colours of its light: 0 steel, 1 flametal, 2 thunderblood
+        internal static int LookIndex(int item) => item == ThunderbloodHash ? 2 : item == FlametalHash ? 1 : 0;
+        private static string LookName(int item) => item == ThunderbloodHash ? "thunderblood" : item == FlametalHash ? "flametal" : "steel";
 
         // spine first, then the arms, the order the pose is built in. the hips and legs only move in the thunderclap's crouch
         // and under the katana's own cuts
@@ -88,7 +93,7 @@ namespace Iaido_Katana
         // higher, the left elbow about 2 cm nearer the body in the idle, the walk and the block
         internal const float LeftShoulderLift = 7f;
 
-        private sealed class State
+        private sealed partial class State
         {
             internal Transform[] Bones;
             internal Transform Hips, Attach;
@@ -357,7 +362,7 @@ namespace Iaido_Katana
             if (!s.HeavyArc && clipTime >= hit)
             {
                 s.HeavyArc = true;
-                KatanaFx.SlashArc(player.transform, flametal, false, true);
+                KatanaFx.SlashArc(player.transform, LookIndex(RightItem(VisOf(player))), false, true);
                 if (Plugin.LogCounters.Value) Plugin.Log.LogInfo($"steel heavy: struck, upright afterimage for {player.GetPlayerName()}");
             }
         }
@@ -391,7 +396,7 @@ namespace Iaido_Katana
                 s.ThunderTrailShown = true;
                 string kind = Plugin.ThunderAfterimage.Value;
                 if (kind == "Path" || kind == "Both") KatanaFx.SlashPath(s.ThunderFrom, player.transform.position);
-                if (kind == "Arc" || kind == "Both") KatanaFx.SlashArc(player.transform, true, false);
+                if (kind == "Arc" || kind == "Both") KatanaFx.SlashArc(player.transform, 1, false);
                 if (Plugin.LogCounters.Value && kind != "Off")
                     Plugin.Log.LogInfo($"thunderclap afterimage ({kind}) for {player.GetPlayerName()}, {Vector3.Distance(s.ThunderFrom, player.transform.position):0.0} m");
             }
@@ -409,7 +414,7 @@ namespace Iaido_Katana
             var vis = VisOf(player);
             if (!vis) return 0;
             int item = BackItem(vis);
-            return item == SteelHash || item == FlametalHash ? item : 0;
+            return item == SteelHash || item == FlametalHash || item == ThunderbloodHash ? item : 0;
         }
 
         private static void HideSaya(State s)
@@ -504,7 +509,7 @@ namespace Iaido_Katana
             int item = katana ? RightItem(VisOf(player)) : back;
             if (!s.Saya || s.SayaItem != item)
             {
-                string look = item == FlametalHash ? "flametal" : "steel";
+                string look = LookName(item);
                 var mesh = KatanaModel.SayaMeshFor(look);
                 var material = KatanaModel.MaterialFor(look);
                 if (!mesh || !material) return;
@@ -520,7 +525,8 @@ namespace Iaido_Katana
                 }
                 s.Sheathed.GetComponent<MeshFilter>().sharedMesh = KatanaModel.KatanaMeshFor(look);
                 if (s.PutAwayLightning) Object.Destroy(s.PutAwayLightning);
-                s.PutAwayLightning = look == "flametal" ? KatanaFx.CopyLightning(Katana.FlametalPrefab, s.Sheathed.transform) : null;
+                s.PutAwayLightning = look == "flametal" ? KatanaFx.CopyLightning(Katana.FlametalPrefab, s.Sheathed.transform)
+                    : look == "thunderblood" ? KatanaFx.CopyLightning(Katana.ThunderbloodPrefab, s.Sheathed.transform) : null;
                 s.SayaMouth = KatanaModel.SayaMouthFor(look);
                 s.Saya.GetComponent<MeshFilter>().sharedMesh = mesh;
                 s.Saya.GetComponent<MeshRenderer>().sharedMaterial = material;
@@ -779,7 +785,7 @@ namespace Iaido_Katana
                 s.Trail = BladeTrail.Make(player.transform, blade.gameObject.layer);
                 if (s.Trail == null) return;
             }
-            s.Trail.Sample(blade, s.TrailOn, RightItem(VisOf(player)) == FlametalHash);
+            s.Trail.Sample(blade, s.TrailOn, LookIndex(RightItem(VisOf(player))));
         }
 
         private static readonly System.Collections.Generic.List<AnimatorClipInfo> ClipBuffer = new System.Collections.Generic.List<AnimatorClipInfo>();
@@ -831,7 +837,7 @@ namespace Iaido_Katana
             var rot = s.Attach.rotation;
             var blade = rot * Vector3.forward;
             var edge = rot * Vector3.right; // the edge leads the cut
-            KatanaFx.SlashMark(s.Attach.position + blade * HitAlong, edge, RightItem(VisOf(player)) == FlametalHash);
+            KatanaFx.SlashMark(s.Attach.position + blade * HitAlong, edge, LookIndex(RightItem(VisOf(player))));
             if (Plugin.LogCounters.Value) Plugin.Log.LogInfo(s.WasOwnClip ? "own clip cut landed, slash mark shown" : $"full-body cut {s.MoveStep} landed, slash mark shown");
         }
 
@@ -845,7 +851,7 @@ namespace Iaido_Katana
             var vis = VisOf(player);
             if (!vis) return false;
             int item = RightItem(vis);
-            return item == SteelHash || item == FlametalHash;
+            return item == SteelHash || item == FlametalHash || item == ThunderbloodHash;
         }
 
         // the katana is out of its scabbard as this client shows it: not resting sheathed in the stance and not past the
@@ -897,7 +903,11 @@ namespace Iaido_Katana
             if (!player) return;
             if (!Plugin.StanceEnabled.Value)
             {
-                if (States.TryGetValue(player, out var off)) HideSaya(off);
+                if (States.TryGetValue(player, out var off))
+                {
+                    HideSaya(off);
+                    HideWaki(off.Daisho);
+                }
                 return;
             }
             bool katana = HoldsKatana(player);
@@ -912,6 +922,7 @@ namespace Iaido_Katana
             if (s.MarkPending) SlashMark(player, s);
             HideHand(player, s, katana && s.RollSheathed);
             UpdateSaya(player, s, katana, back);
+            UpdateWaki(player, s, katana, back);
             UpdateCrackle(s, katana);
             DrawTrail(player, s, katana);
             RecordPose(player, s, katana);
@@ -1040,6 +1051,8 @@ namespace Iaido_Katana
             if (SlashOn) WatchSlashes(player, s);
 
             bool alive = katana && !player.IsDead();
+            // the daisho's parry or Ranbu (the Thunderblood Katana), its own timeline over the stance
+            bool daisho = DaishoFrame(player, s, alive);
             // taken out again: it rests in the scabbard at the hip while the hand comes to the grip
             if (alive && !s.HadKatana && s.HasHip && Plugin.ScabbardOn.Value)
             {
@@ -1068,7 +1081,7 @@ namespace Iaido_Katana
             if (slashing && !s.ArcShown && slashTime >= IaiSlash.HitTime)
             {
                 s.ArcShown = true;
-                KatanaFx.SlashArc(player.transform, RightItem(VisOf(player)) == FlametalHash);
+                KatanaFx.SlashArc(player.transform, LookIndex(RightItem(VisOf(player))));
                 if (Plugin.LogCounters.Value) Plugin.Log.LogInfo($"parry afterimage for {player.GetPlayerName()} ({Plugin.CounterAreaAngle.Value:0} degrees, {Plugin.CounterAreaRange.Value:0.#} m)");
             }
 
@@ -1086,7 +1099,7 @@ namespace Iaido_Katana
             int step = -1;
             bool otherAttack = false;
             bool attacking = alive && AttackClip(AnimatorOf(player), s, out step, out clipTime, out otherAttack);
-            bool combo = attacking && !otherAttack && Moves.Owns(step) && !thunder && !slashing;
+            bool combo = attacking && !otherAttack && Moves.Owns(step) && !thunder && !slashing && !daisho;
             if (combo)
             {
                 if (s.Move != 1 || s.MoveStep != step) StartCombo(player, s, step, clipTime);
@@ -1112,7 +1125,7 @@ namespace Iaido_Katana
             if (s.Move == 2) StepSheathe(player, s, alive && !player.IsBlocking() && !rolling && !thunder && !slashing && !attacking);
             bool moving = s.Move != 0;
             if (moving || slashing || thunder || !attacking) s.FadeCut = false; // another of the katana's own moves takes over, or the swing ended
-            bool bladeOut = slashing || moving || (thunder && thunderTime >= s.ThunderPrep && thunderTime < Thunder.SheathedAt(s.ThunderPrep));
+            bool bladeOut = slashing || moving || daisho || (thunder && thunderTime >= s.ThunderPrep && thunderTime < Thunder.SheathedAt(s.ThunderPrep));
 
             // the trail through each cut: the parry's, the thunderclap's and the combo's
             // one of the katana's own clips playing: its whoosh, bold trail and slash mark like the full-body cut's
@@ -1122,6 +1135,7 @@ namespace Iaido_Katana
             s.LastOwnTime = clipTime;
             Trail(player, s, (slashing && slashTime >= TrailFrom && slashTime < TrailTo)
                              || (thunder && thunderTime >= s.ThunderPrep && thunderTime < s.ThunderPrep + Thunder.Cut)
+                             || (daisho && DaishoCut(s.Daisho, false))
                              || (s.Move == 1 && Moves.InCut(s.MoveStep, clipTime))
                              || (ownCut && Moves.InFullCut(s.OwnStep, clipTime)));
             bool fullCut = s.Move == 1 && Moves.HasFullBody(s.MoveStep);
@@ -1131,7 +1145,7 @@ namespace Iaido_Katana
             if ((fullCut || ownCut) && !heavy && !s.StrikeSounded && clipTime >= Moves.FullStrikeAt(fullCut ? s.MoveStep : s.OwnStep))
             {
                 s.StrikeSounded = true;
-                KatanaFx.SlashSound(s.Attach.position, RightItem(VisOf(player)) == FlametalHash);
+                KatanaFx.SlashSound(s.Attach.position, LookIndex(RightItem(VisOf(player))));
             }
             if (heavy) HeavyEvents(player, s, clipTime);
             else EndHeavy(s);
@@ -1139,7 +1153,7 @@ namespace Iaido_Katana
             // the cut's own footing (and the heavy's step) while standing. walking or running under an upper body swing
             // the legs are the game's walk, and only the hips turn into the cut
             float bodyWant = s.Move == 1 ? (Plugin.UpperBodySwings.Value ? Standing(player) : 1f) : 0f;
-            s.Body = thunder ? 0f : Mathf.MoveTowards(s.Body, bodyWant, Time.deltaTime / (bodyWant > s.Body ? BodyIn : BodyOut));
+            s.Body = thunder || daisho ? 0f : Mathf.MoveTowards(s.Body, bodyWant, Time.deltaTime / (bodyWant > s.Body ? BodyIn : BodyOut));
 
             // the stance: while blocking, during the katana's own moves, or at rest on the idle and walk clips
             bool free = alive && !player.InAttack() && !rolling;
@@ -1265,6 +1279,9 @@ namespace Iaido_Katana
                 if (s.Body <= 0f) s.HasLastFooting = false;
             }
             var full = FullPose(player, s, crouch, s.Move == 1 || s.FadeCut, s.Body > 0f ? Footing : Crouch, s.Body);
+            // the daisho's recorded pose over the solved one, or its last pose fading into the sheathing's
+            if (daisho) DaishoPose(player, s, full);
+            else DaishoTail(s, full);
             var fullHips = s.Hips.localPosition;
             FollowBlade(player, s);
             float eased = s.Weight * s.Weight * (3f - 2f * s.Weight); // starts and ends gently

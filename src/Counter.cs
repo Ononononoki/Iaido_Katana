@@ -95,6 +95,13 @@ namespace Iaido_Katana
             _ranged = ranged;
             _parryTime = Time.time;
             _id++;
+            // the daisho's parry (the Thunderblood Katana): both blades, the counter lands with the katana's
+            if (Daisho.Parries(player))
+            {
+                IaiStance.StartDaishoParry(player);
+                player.StartCoroutine(StrikeAfter(_id, Mathf.Max(Plugin.CounterDelay.Value, Daisho.ParryKatanaAt)));
+                return;
+            }
             // from the iai stance: the draw and cut, the counter lands as the blade passes the middle
             if (IaiStance.SlashOn && IaiStance.HoldsKatana(player))
             {
@@ -168,9 +175,20 @@ namespace Iaido_Katana
             KatanaFx.HitEffect(weapon.m_shared.m_hitEffect, hit.m_point, Quaternion.LookRotation(hit.m_dir), ImpactFrame.InkHides);
             // the game's own hit stop on both fighters, longer than a normal hit's (Impact.FreezeSeconds). only on this
             // client: Character.FreezeFrame would send it to every player
-            LocalFreeze(player, Plugin.ImpactFreeze.Value);
-            LocalFreeze(attacker, Plugin.ImpactFreeze.Value);
-            IaiStance.HoldSlash(player, Plugin.ImpactFreeze.Value);
+            // the daisho's parry has two beats: the katana's hit stops the move for a moment, the wakizashi's after it for the
+            // full hit stop (Counter.WakizashiBeat)
+            bool daisho = IaiStance.DaishoPlaying(player, true);
+            float freeze = daisho ? Daisho.FirstBeatFreeze : Plugin.ImpactFreeze.Value;
+            LocalFreeze(player, freeze);
+            LocalFreeze(attacker, freeze);
+            if (daisho)
+            {
+                IaiStance.HoldDaisho(player, freeze);
+                _beatPlayer = player;
+                _beatAttacker = attacker;
+                _beatFactor = factor;
+            }
+            else IaiStance.HoldSlash(player, freeze);
             ImpactFrame.Play(hit.m_point);
             player.RaiseSkill(Skills.SkillType.Swords, 1f);
 
@@ -196,6 +214,38 @@ namespace Iaido_Katana
             if (melee && Plugin.CounterArea.Value) CutAround(player, attacker, weapon);
         }
 
+        // the daisho parry's second beat: the wakizashi crosses the katana's cut, on the parried enemy and the ones around it,
+        // each with its own hit (half frost, which slows), and the second impact frame with the full hit stop
+        private static Player _beatPlayer;
+        private static Character _beatAttacker;
+        private static float _beatFactor;
+
+        internal static void WakizashiBeat(Player player)
+        {
+            if (_beatPlayer != player) return;
+            var attacker = _beatAttacker;
+            float factor = _beatFactor;
+            _beatPlayer = null;
+            _beatAttacker = null;
+            var weapon = player.GetCurrentWeapon();
+            if (!Katana.IsThunderblood(weapon)) return;
+            Vector3 point = attacker && !attacker.IsDead() ? attacker.GetCenterPoint() : player.GetCenterPoint() + player.transform.forward * 1.5f;
+            if (attacker && !attacker.IsDead())
+            {
+                var hit = Hit(player, attacker, weapon, factor * Plugin.WakizashiParryShare.Value);
+                hit.m_damage = Daisho.Frostify(hit.m_damage);
+                attacker.Damage(hit);
+                KatanaFx.HitEffect(weapon.m_shared.m_hitEffect, hit.m_point, Quaternion.LookRotation(hit.m_dir), ImpactFrame.InkHides);
+                LocalFreeze(attacker, Plugin.ImpactFreeze.Value);
+                if (Plugin.LogCounters.Value)
+                    Plugin.Log.LogInfo($"wakizashi on {attacker.m_name}: {hit.m_damage.GetTotalDamage():0} before resistances (x{factor * Plugin.WakizashiParryShare.Value:0.00} of the katana, half frost)");
+            }
+            if (Plugin.CounterArea.Value) CutAround(player, attacker, weapon, true);
+            LocalFreeze(player, Plugin.ImpactFreeze.Value);
+            IaiStance.HoldDaisho(player, Plugin.ImpactFreeze.Value);
+            ImpactFrame.Play(point, true, true);
+        }
+
         // one hit of the counter's cut, from the player toward the target
         private static HitData Hit(Player player, Character target, ItemDrop.ItemData weapon, float factor)
         {
@@ -218,29 +268,31 @@ namespace Iaido_Katana
         // wide swing (AreaAngle) toward the parried attacker, each with a full hit of AreaDamageMultiplier (no share between
         // targets, like the katana's own swings). an enemy cut by a counter in the last CutAgain seconds is left out,
         // so parries close together never add their cuts up on one enemy
-        private static void CutAround(Player player, Character attacker, ItemDrop.ItemData weapon)
+        private static void CutAround(Player player, Character attacker, ItemDrop.ItemData weapon, bool wakizashi = false)
         {
             var from = player.GetCenterPoint();
-            var ahead = attacker.transform.position - player.transform.position;
+            // the parried enemy may be gone (the katana's own hit killed it), then the cut goes where the player faces
+            var ahead = attacker ? attacker.transform.position - player.transform.position : player.transform.forward;
             ahead.y = 0f;
             ahead = ahead.sqrMagnitude > 1e-4f ? ahead.normalized : player.transform.forward;
             foreach (var gone in CutAt.Where(c => !c.Key || Time.time - c.Value > CutAgain).Select(c => c.Key).ToList()) CutAt.Remove(gone);
             foreach (var who in Character.GetAllCharacters())
             {
-                if (!who || who == player || who.IsDead() || CutAt.ContainsKey(who) || !Thunderclap.Enemy(player, who)) continue;
+                if (!who || who == player || who.IsDead() || (!wakizashi && CutAt.ContainsKey(who)) || (wakizashi && who == attacker) || !Thunderclap.Enemy(player, who)) continue;
                 var point = who.GetCenterPoint();
                 if (!Katana.InSwing(point - from, ahead, who.GetRadius(), Plugin.CounterAreaRange.Value, Plugin.CounterAreaAngle.Value, AreaHeight)) continue;
                 if (Physics.Linecast(from, point, Thunderclap.Walls)) continue; // not through walls and rocks
 
-                var hit = Hit(player, who, weapon, Plugin.CounterAreaMultiplier.Value * player.GetRandomSkillFactor(Skills.SkillType.Swords));
+                var hit = Hit(player, who, weapon, Plugin.CounterAreaMultiplier.Value * player.GetRandomSkillFactor(Skills.SkillType.Swords) * (wakizashi ? Plugin.WakizashiParryShare.Value : 1f));
+                if (wakizashi) hit.m_damage = Daisho.Frostify(hit.m_damage);
                 who.Damage(hit);
-                CutAt[who] = Time.time;
+                if (!wakizashi) CutAt[who] = Time.time;
                 KatanaFx.HitEffect(weapon.m_shared.m_hitEffect, point, Quaternion.LookRotation(hit.m_dir), ImpactFrame.InkHides);
                 LocalFreeze(who, Plugin.ImpactFreeze.Value);
                 if (Plugin.LogCounters.Value)
                     Plugin.Log.LogInfo($"counter cut on {who.m_name}: {hit.m_damage.GetTotalDamage():0} before resistances ({Vector3.Distance(from, point):0.0} m away)");
             }
-            if (!Chop.On(weapon)) return;
+            if (wakizashi || !Chop.On(weapon)) return;
             int chopped = Chop.CutAround(player, weapon, from, ahead, Plugin.CounterAreaRange.Value, Plugin.CounterAreaAngle.Value, AreaHeight);
             if (Plugin.LogCounters.Value)
                 Plugin.Log.LogInfo($"counter chop: {chopped} trees, logs or stumps (chop {Chop.Damage(weapon):0}, tier {Chop.Tier(weapon)}, {Plugin.CounterAreaAngle.Value:0} degrees, {Plugin.CounterAreaRange.Value:0.#} m)");

@@ -124,7 +124,7 @@ namespace Iaido_Katana
             {
                 if (__instance is Player player && player == Player.m_localPlayer && Katana.IsKatana(player.GetCurrentWeapon()))
                     ClipSwap.Step(player, true);
-                if (!Thunderclap.TryStart(__instance, secondaryAttack)) return true;
+                if (!Thunderclap.TryStart(__instance, secondaryAttack) && !Daisho.TryStart(__instance, secondaryAttack)) return true;
                 __result = false;
                 return false;
             }
@@ -327,7 +327,11 @@ namespace Iaido_Katana
         {
             private static void Postfix(Player __instance)
             {
-                if (__instance == Player.m_localPlayer) Thunderclap.Update(__instance);
+                if (__instance == Player.m_localPlayer)
+                {
+                    Thunderclap.Update(__instance);
+                    Daisho.Update(__instance);
+                }
                 ClipSwap.Step(__instance);
                 IaiStance.Step(__instance);
             }
@@ -350,9 +354,13 @@ namespace Iaido_Katana
         private static class ThunderControls
         {
             private static void Prefix(Player __instance, ref Vector3 movedir, ref bool attack, ref bool attackHold, ref bool secondaryAttack,
-                ref bool secondaryAttackHold, ref bool block, ref bool blockHold, ref bool jump, ref bool crouch, ref bool run, ref bool autoRun, bool dodge) =>
+                ref bool secondaryAttackHold, ref bool block, ref bool blockHold, ref bool jump, ref bool crouch, ref bool run, ref bool autoRun, bool dodge)
+            {
                 Thunderclap.Controls(__instance, ref movedir, ref attack, ref attackHold, ref secondaryAttack, ref secondaryAttackHold,
                     ref block, ref blockHold, ref jump, ref crouch, ref run, ref autoRun, dodge);
+                Daisho.Controls(__instance, ref movedir, ref attack, ref attackHold, ref secondaryAttack, ref secondaryAttackHold,
+                    ref block, ref blockHold, ref jump, ref crouch, ref run, ref autoRun, dodge);
+            }
         }
 
         // the dash of the thunderclap can not be hit, like a dodge

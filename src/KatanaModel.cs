@@ -27,6 +27,7 @@ namespace Iaido_Katana
         private static readonly Dictionary<string, Material> Materials = new Dictionary<string, Material>();
         private static readonly Dictionary<string, Vector3> Mouths = new Dictionary<string, Vector3>();
         private static readonly Dictionary<string, Mesh> Glows = new Dictionary<string, Mesh>();
+        private static readonly Dictionary<string, BladeShape> Shapes = new Dictionary<string, BladeShape>();
         internal const float GlowFrom = 0.47f; // the glow shell starts past the guard, along the katana mesh
         private static Texture2D _flatNormal;
 
@@ -93,6 +94,43 @@ namespace Iaido_Katana
                     stris.Add(now);
                 }
             }
+        }
+
+        // the daisho's wakizashi, its scabbard and its material, made like a katana's from files inside the dll
+        internal static Mesh WakizashiMesh() => LoadMesh("wakizashi.obj");
+        internal const float WakizashiBladeFrom = 0.35f; // its blade starts past the guard, along its mesh
+
+        // a blade's middle line and width, for the effects that lie on it (BladeFx). measured while the mesh loads
+        internal static BladeShape ShapeFor(string look) => ShapeOf(MeshName("katana", look));
+        internal static BladeShape WakizashiShape() => ShapeOf("wakizashi.obj");
+
+        private static BladeShape ShapeOf(string name)
+        {
+            if (!Shapes.ContainsKey(name)) LoadMesh(name);
+            return Shapes.TryGetValue(name, out var shape) ? shape : null;
+        }
+        internal static Mesh WakizashiSayaMesh() => LoadMesh("wakizashi_saya.obj");
+
+        internal static Material WakizashiMaterial()
+        {
+            if (Materials.TryGetValue("wakizashi", out var made) && made) return made;
+            var albedo = LoadTexture("wakizashi_d.png");
+            var metal = LoadTexture("wakizashi_m.png");
+            var template = KromMaterial();
+            if (!albedo || !metal || !template) return null;
+            var material = new Material(template) { name = "IaidoKatana_wakizashi", color = Color.white };
+            material.SetTexture("_MainTex", albedo);
+            material.SetTexture("_MetallicGlossMap", metal);
+            if (material.HasProperty("_BumpMap")) material.SetTexture("_BumpMap", FlatNormal());
+            if (material.HasProperty("_MetalColor")) material.SetColor("_MetalColor", Color.white);
+            var glow = LoadTexture("wakizashi_e.png", optional: true);
+            if (material.HasProperty("_EmissionMap"))
+            {
+                material.SetTexture("_EmissionMap", glow);
+                material.SetColor("_EmissionColor", glow ? GlowStrength : Color.black);
+            }
+            Materials["wakizashi"] = material;
+            return material;
         }
 
         internal static Material MaterialFor(string variant) => Materials.TryGetValue(variant, out var m) ? m : null;
@@ -162,7 +200,15 @@ namespace Iaido_Katana
             var tip = attach.Find("equiped/trail/tip");
             if (tip) tip.localPosition = TrailTip;
             // the flametal blade crackles with lightning while it is drawn, like the slayer's and splitnir's lightning
-            if (variant == "flametal") KatanaFx.BladeLightning(node.transform, GlowMeshFor(variant));
+            if (variant == "flametal") KatanaFx.BladeLightning(node.transform, GlowMeshFor(variant), ShapeFor(variant));
+            if (variant == "thunderblood")
+            {
+                // the bloodgold's own red lightning hangs on the hand's attach frame along a straight blade (it stood
+                // beside the katana). thin lightning on the katana's own curve instead
+                var baseVfx = attach.Find("VFX");
+                if (baseVfx) baseVfx.gameObject.SetActive(false);
+                KatanaFx.ThunderbloodLightning(node.transform, ShapeFor(variant));
+            }
             return true;
         }
 
@@ -190,6 +236,7 @@ namespace Iaido_Katana
             }
             if (v.Count == 0 || v.Count != uv.Count || v.Count != n.Count) return null;
             if (name.StartsWith("saya")) Mouths[name] = OpenEnd(v);
+            if (name.StartsWith("katana") || name == "wakizashi.obj") Shapes[name] = BladeFx.Shape(v, name.StartsWith("katana") ? GlowFrom : WakizashiBladeFrom);
             if (name.StartsWith("katana"))
             {
                 var sv = new List<Vector3>();

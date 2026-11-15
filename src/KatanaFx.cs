@@ -14,6 +14,12 @@ namespace Iaido_Katana
 
         // the cut's trail: gold for steel, blue white lightning for flametal, fading over the trail's life
         internal static readonly Color[] SteelTrail = { new Color(1f, 0.82f, 0.35f, 1f), new Color(1f, 0.6f, 0.15f, 0.6f), new Color(1f, 0.5f, 0.1f, 0f) };
+        // the Deep North katana: white hot at the start, pure red, never maroon (a dark red on dark metal reads brown)
+        internal static readonly Color[] ThunderbloodTrail = { new Color(1f, 0.85f, 0.8f, 1f), new Color(1f, 0.16f, 0.08f, 0.85f), new Color(0.75f, 0.03f, 0.02f, 0f) };
+        // which katana's light a cut takes: 0 steel (gold), 1 flametal (blue white), 2 thunderblood (red)
+        // 3 is the daisho's wakizashi: ice blue, white hot first
+        internal static readonly Color[] FrostTrail = { new Color(0.85f, 0.98f, 1f, 1f), new Color(0.12f, 0.66f, 1f, 0.85f), new Color(0.04f, 0.32f, 0.85f, 0f) };
+        internal static Color[] TrailOf(int look) => look == 3 ? FrostTrail : look == 2 ? ThunderbloodTrail : look == 1 ? FlametalTrail : SteelTrail;
         internal static readonly Color[] FlametalTrail = { new Color(0.85f, 0.95f, 1f, 1f), new Color(0.35f, 0.6f, 1f, 0.7f), new Color(0.2f, 0.35f, 1f, 0f) };
 
         private const float GlintSeconds = 0.3f;
@@ -174,7 +180,7 @@ namespace Iaido_Katana
         // so the heavy does not flood the ground with light
         private const float ArcLight = 6f, ArcLightReach = 2.5f, HeavyArcLight = 1.5f, HeavyArcLightRange = 3f;
 
-        internal static void SlashArc(Transform body, bool flametal, bool parry = true, bool upright = false)
+        internal static void SlashArc(Transform body, int look, bool parry = true, bool upright = false, float roll = 0f, float rangeOverride = 0f, float angleOverride = 0f)
         {
             if ((parry || upright) && !Plugin.AfterimageOn.Value || !Plugin.Instance || !body) return;
             var material = ArcMaterial();
@@ -185,7 +191,7 @@ namespace Iaido_Katana
             var arc = new GameObject("IaidoKatana_afterimage", typeof(MeshFilter), typeof(MeshRenderer));
             arc.transform.position = body.position + Vector3.up * (upright ? HeavyArcHeight : ArcHeight);
             // upright: the crescent turned on its side, so it sweeps in from above and comes down
-            arc.transform.rotation = Quaternion.LookRotation(ahead.normalized, Vector3.up) * (upright ? Quaternion.Euler(0f, 0f, -90f) : Quaternion.identity);
+            arc.transform.rotation = Quaternion.LookRotation(ahead.normalized, Vector3.up) * (upright ? Quaternion.Euler(0f, 0f, -90f) : Quaternion.Euler(0f, 0f, roll));
             var mesh = new Mesh { name = "IaidoKatana_afterimage" };
             arc.GetComponent<MeshFilter>().sharedMesh = mesh;
             var renderer = arc.GetComponent<MeshRenderer>();
@@ -194,15 +200,15 @@ namespace Iaido_Katana
             renderer.receiveShadows = false;
             var light = arc.AddComponent<Light>();
             light.type = LightType.Point;
-            light.color = flametal ? new Color(0.65f, 0.82f, 1f) : new Color(1f, 0.82f, 0.45f);
-            float range = upright ? HeavyArcRange : Plugin.CounterAreaRange.Value;
+            light.color = look == 3 ? new Color(0.3f, 0.7f, 1f) : look == 2 ? new Color(1f, 0.32f, 0.2f) : look == 1 ? new Color(0.65f, 0.82f, 1f) : new Color(1f, 0.82f, 0.45f);
+            float range = upright ? HeavyArcRange : rangeOverride > 0f ? rangeOverride : Plugin.CounterAreaRange.Value;
             light.range = upright ? HeavyArcLightRange : range * ArcLightReach;
             light.intensity = 0f;
-            Plugin.Instance.StartCoroutine(PlayArc(arc, mesh, light, range, upright ? HeavyArcAngle : Plugin.CounterAreaAngle.Value, flametal,
+            Plugin.Instance.StartCoroutine(PlayArc(arc, mesh, light, range, upright ? HeavyArcAngle : angleOverride > 0f ? angleOverride : Plugin.CounterAreaAngle.Value, look,
                 upright ? HeavyArcLight : ArcLight));
         }
 
-        private static IEnumerator PlayArc(GameObject arc, Mesh mesh, Light light, float range, float angle, bool flametal, float peakLight)
+        private static IEnumerator PlayArc(GameObject arc, Mesh mesh, Light light, float range, float angle, int look, float peakLight)
         {
             int n = ArcSegments + 1;
             var vertices = new Vector3[n * 2];
@@ -217,8 +223,9 @@ namespace Iaido_Katana
                 triangles[k++] = o; triangles[k++] = o + 1; triangles[k++] = p;
                 triangles[k++] = o + 1; triangles[k++] = p + 1; triangles[k++] = p;
             }
-            var colour = flametal ? FlametalTrail[0] : SteelTrail[0];
-            var deep = flametal ? FlametalTrail[1] : SteelTrail[1];
+            bool flametal = look != 0; // the lightning katanas flicker
+            var colour = TrailOf(look)[0];
+            var deep = TrailOf(look)[1];
             float start = Time.time;
             bool first = true;
             while (arc)
@@ -391,7 +398,7 @@ namespace Iaido_Katana
         }
 
         // the trail's own additive material, plain, so the arc's vertex colours draw it
-        private static Material ArcMaterial()
+        internal static Material ArcMaterial()
         {
             if (_arcMaterial) return _arcMaterial;
             var template = TrailMaterialOf("THSwordKrom");
@@ -409,13 +416,34 @@ namespace Iaido_Katana
         // and a knife's under it for the edge. the game's own swing sound still comes with the greatsword swing's trail
         private const string SlashHigh = "sfx_sword_swing", SlashEdge = "sfx_knife_swing";
 
-        internal static void SlashSound(Vector3 point, bool flametal)
+        internal static void SlashSound(Vector3 point, int look)
         {
             float volume = Plugin.SlashSoundVolume.Value;
             if (volume <= 0f) return;
-            ImpactFrame.PlayLayer(point, SlashHigh, flametal ? 1.15f : 1.25f, volume, 0f, true);
+            ImpactFrame.PlayLayer(point, SlashHigh, look != 0 ? 1.15f : 1.25f, volume, 0f, true);
             ImpactFrame.PlayLayer(point, SlashEdge, 0.9f, volume * 0.7f, 0f, true);
         }
+
+        // a ranbu cut: deeper and heavier than a single cut's whoosh. the krom greatsword's swing played low with a
+        // battleaxe's under it, both cut short so the fast last cuts do not pile up, and the knife's for the edge
+        private const string RanbuDeep = "sfx_kromsword_swing", RanbuHeavy = "sfx_battleaxe_swing_wosh";
+        private const float RanbuDeepPitch = 0.8f, RanbuHeavyPitch = 0.75f, RanbuWakizashiPitch = 1.15f, RanbuSoundSeconds = 0.5f;
+
+        internal static void RanbuSound(Vector3 point, int look)
+        {
+            float volume = Plugin.SlashSoundVolume.Value;
+            if (volume <= 0f) return;
+            float higher = look == 3 ? RanbuWakizashiPitch : 1f;
+            ImpactFrame.PlayLayer(point, RanbuDeep, RanbuDeepPitch * higher, volume, RanbuSoundSeconds, true);
+            ImpactFrame.PlayLayer(point, RanbuHeavy, RanbuHeavyPitch * higher, volume * 0.8f, RanbuSoundSeconds, true);
+            ImpactFrame.PlayLayer(point, SlashEdge, 0.8f, volume * 0.5f, 0f, true);
+        }
+
+        // a ranbu cut's flash: the slash mark's line of light along the cut, but gone almost at once, so each snap of
+        // the blade lands with a blink and not with a lingering line
+        private const float CutFlashHold = 0.03f, CutFlashFade = 0.14f, CutFlashLength = 2.2f;
+
+        internal static void CutFlash(Vector3 point, Vector3 along, int look) => SlashMark(point, along, look, CutFlashHold, CutFlashFade, CutFlashLength);
 
         // where a full-body cut lands, on the hitting player's own screen: a thin straight line of light along the cut
         // through the blade, held bright for a moment and then fading slowly (the inspiration clip's golden slash), a
@@ -424,10 +452,10 @@ namespace Iaido_Katana
         // the flash at the hit is a small glint that lights only about two metres around it, golden white for steel and
         // blue white for flametal, so hits do not light up dark places. the steel line itself is a little fainter
         private const float MarkLight = 1.2f, MarkRange = 2f, SteelMarkAlpha = 0.75f;
-        private static readonly Color SteelMarkGlow = new Color(1f, 0.92f, 0.75f), FlametalMarkGlow = new Color(0.75f, 0.88f, 1f);
+        private static readonly Color SteelMarkGlow = new Color(1f, 0.92f, 0.75f), FrostMarkGlow = new Color(0.55f, 0.85f, 1f), FlametalMarkGlow = new Color(0.75f, 0.88f, 1f), ThunderbloodMarkGlow = new Color(1f, 0.55f, 0.4f);
         private static Material _markMaterial;
 
-        internal static void SlashMark(Vector3 point, Vector3 along, bool flametal)
+        internal static void SlashMark(Vector3 point, Vector3 along, int look, float hold = MarkHold, float fade = MarkFade, float length = MarkLength)
         {
             if (!Plugin.SlashMarkOn.Value || !Plugin.Instance) return;
             var material = MarkMaterial();
@@ -446,23 +474,23 @@ namespace Iaido_Katana
             renderer.receiveShadows = false;
             var light = mark.AddComponent<Light>();
             light.type = LightType.Point;
-            light.color = flametal ? FlametalMarkGlow : SteelMarkGlow;
+            light.color = look == 3 ? FrostMarkGlow : look == 2 ? ThunderbloodMarkGlow : look == 1 ? FlametalMarkGlow : SteelMarkGlow;
             light.range = MarkRange;
             light.intensity = 0f;
-            var colour = flametal ? FlametalTrail[0] : SteelTrail[0];
-            Plugin.Instance.StartCoroutine(PlayMark(mark, mesh, light, along.normalized, colour, MarkLight, flametal ? 1f : SteelMarkAlpha));
+            var colour = TrailOf(look)[0];
+            Plugin.Instance.StartCoroutine(PlayMark(mark, mesh, light, along.normalized, colour, MarkLight, look != 0 ? 1f : SteelMarkAlpha, hold, fade, length));
             var camera = GameCamera.instance;
             if (camera && Plugin.SlashShake.Value > 0f) camera.AddShake(camera.transform.position, 20f, Plugin.SlashShake.Value, false);
         }
 
-        private static IEnumerator PlayMark(GameObject mark, Mesh mesh, Light light, Vector3 along, Color colour, float peakLight, float alpha)
+        private static IEnumerator PlayMark(GameObject mark, Mesh mesh, Light light, Vector3 along, Color colour, float peakLight, float alpha, float hold, float fadeSeconds, float length)
         {
             float start = Time.time;
             var colours = new Color[4];
             while (mark)
             {
                 float t = Time.time - start;
-                if (t >= MarkHold + MarkFade) break;
+                if (t >= hold + fadeSeconds) break;
                 // the line lies along the cut, its face turned to the camera
                 var camera = Camera.main;
                 if (camera)
@@ -472,14 +500,14 @@ namespace Iaido_Katana
                     if (face.sqrMagnitude > 1e-6f) mark.transform.rotation = Quaternion.LookRotation(-face, along);
                 }
                 float grow = Mathf.Clamp01(t / MarkGrow);
-                float fade = t < MarkHold ? 1f : 1f - (t - MarkHold) / MarkFade;
+                float fade = t < hold ? 1f : 1f - (t - hold) / fadeSeconds;
                 fade *= fade;
-                mark.transform.localScale = new Vector3(MarkWidth * (1f + 0.5f * (1f - fade)), MarkLength * (0.4f + 0.6f * grow), 1f);
-                var c = Color.Lerp(new Color(1f, 1f, 1f, 1f), colour, Mathf.Clamp01(t / MarkHold)); // white hot first
+                mark.transform.localScale = new Vector3(MarkWidth * (1f + 0.5f * (1f - fade)), length * (0.4f + 0.6f * grow), 1f);
+                var c = Color.Lerp(new Color(1f, 1f, 1f, 1f), colour, Mathf.Clamp01(t / hold)); // white hot first
                 c.a = fade * alpha;
                 for (int i = 0; i < 4; i++) colours[i] = c;
                 mesh.colors = colours;
-                if (light) light.intensity = peakLight * fade * (t < MarkHold ? 1f : 0.5f);
+                if (light) light.intensity = peakLight * fade * (t < hold ? 1f : 0.5f);
                 yield return null;
             }
             if (mark) Object.Destroy(mark);
@@ -647,93 +675,108 @@ namespace Iaido_Katana
         }
 
         internal const string LightningName = "IaidoKatana_lightning";
-        // the slayer's lightning is laid along a straight blade; turned this far toward the back (-x of the attach
-        // frame) about where the katana's blade leaves the guard, it lies along the line from there to the curved tip
-        private const float CurveTurn = -7.6f;
-        private static readonly Vector3 CurvePivot = new Vector3(0f, 0f, 0.14f);
+        // the flametal blade's lightning while it is drawn: a glow shell over the blade in the game's WeaponGlow
+        // material, and thin blue lightning on the katana's own curve like the thunderblood's (BladeFx.Lightning, the
+        // owner, 15 Nov: the slayer's own arcs and storm wisps stood beside the blade, shorter than it and too large).
+        // made once on the item prefab, so every copy has it (in the hand, at the hip, dropped)
+        private const string SlayerLightningPrefab = "THSwordSlayerLightning", SlayerLightningPath = "attach/default/VFX";
 
-        // the flametal blade's lightning while it is drawn, the way the game's iolite weapons have it (slayer, splitnir,
-        // nidhogg): a glow shell over the blade in the game's WeaponGlow material, arcs flowing along the blade joined
-        // into three jagged ribbons, faint storm wisps and a flickering blue light. the slayer's own parts with its own
-        // settings, laid along the katana. made once on the item prefab, so every copy has it (in the hand, on the back,
-        // dropped); IaiStance switches it off while the blade is in its scabbard
-        internal static void BladeLightning(Transform node, Mesh glowMesh)
+        internal static void BladeLightning(Transform node, Mesh glowMesh, BladeShape blade)
         {
-            var source = Jotunn.Managers.PrefabManager.Instance.GetPrefab("THSwordSlayerLightning");
-            var vfx = source ? source.transform.Find("attach/default/VFX") : null;
-            if (!vfx)
+            var source = Jotunn.Managers.PrefabManager.Instance.GetPrefab(SlayerLightningPrefab);
+            var vfx = source ? source.transform.Find(SlayerLightningPath) : null;
+            if (!vfx || blade == null)
             {
-                Plugin.Log.LogWarning("flametal blade lightning: the slayer's lightning was not found, none");
+                Plugin.Log.LogWarning($"blade lightning: {SlayerLightningPrefab} or the blade's shape was not found, none");
                 return;
             }
-            int layer = node.gameObject.layer;
-            var root = new GameObject(LightningName) { layer = layer };
-            root.transform.SetParent(node, false);
+            var root = BladeFx.Lightning(node, blade, vfx, LightningName, BladeFx.StormHot, BladeFx.StormDeep, BladeFx.StormSize, BladeFx.StormBright);
 
             // the glow shell, on the katana mesh's own frame
             var glowMaterial = vfx.GetComponent<MeshRenderer>() ? vfx.GetComponent<MeshRenderer>().sharedMaterial : null;
             if (glowMesh && glowMaterial)
             {
-                var glow = new GameObject("glow", typeof(MeshFilter), typeof(MeshRenderer)) { layer = layer };
+                var glow = new GameObject("glow", typeof(MeshFilter), typeof(MeshRenderer)) { layer = root.layer };
                 glow.transform.SetParent(root.transform, false);
                 glow.GetComponent<MeshFilter>().sharedMesh = glowMesh;
                 var renderer = glow.GetComponent<MeshRenderer>();
                 renderer.sharedMaterial = glowMaterial;
                 renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             }
-            else Plugin.Log.LogWarning("flametal blade lightning: no glow shell");
-
-            // the arcs, wisps and light where the slayer has them in its attach frame (the hand at 0, the blade along +z,
-            // the same frame the katana is held in), turned at the guard along the katana's curve
-            var arcs = new GameObject("arcs") { layer = layer };
-            arcs.transform.SetParent(root.transform, false);
-            var slayerBlade = vfx.parent;
-            var inAttach = slayerBlade.localPosition + slayerBlade.localRotation * vfx.localPosition;
-            var turnInAttach = slayerBlade.localRotation * vfx.localRotation;
-            var curve = Quaternion.Euler(0f, CurveTurn, 0f);
-            var toNode = Quaternion.Inverse(KatanaModel.NodeRotation);
-            arcs.transform.localPosition = toNode * (CurvePivot + curve * (inAttach - CurvePivot) - KatanaModel.NodePosition);
-            arcs.transform.localRotation = toNode * curve * turnInAttach;
-            foreach (Transform part in vfx)
-            {
-                var copy = Object.Instantiate(part.gameObject, arcs.transform, false);
-                copy.name = part.name;
-                foreach (var t in copy.GetComponentsInChildren<Transform>(true)) t.gameObject.layer = layer;
-                // the arcs are already there, not building up
-                foreach (var ps in copy.GetComponentsInChildren<ParticleSystem>(true))
-                {
-                    var main = ps.main;
-                    main.prewarm = main.loop;
-                    // the storm wisps 80% more see-through than the slayer's (the user found them too thick)
-                    if (part.name == "Clouds") main.startColor = Faded(main.startColor, CloudAlpha);
-                }
-            }
+            else if (glowMesh) Plugin.Log.LogWarning("flametal blade lightning: no glow shell");
         }
 
-        private const float CloudAlpha = 0.2f;
+        // the bloodgold greatsword's red lightning is laid along a straight blade, with wide clouds and splats. on the
+        // Thunderblood Katana its parts are laid on the katana's own curve instead (BladeFx.Lightning)
+        internal const string ThunderbloodLightningPrefab = "THSwordGold_BloodLightning", ThunderbloodLightningPath = "attach/VFX";
 
-        private static ParticleSystem.MinMaxGradient Faded(ParticleSystem.MinMaxGradient g, float k)
+        internal static void ThunderbloodLightning(Transform node, BladeShape blade)
         {
-            Color F(Color c) => new Color(c.r, c.g, c.b, c.a * k);
-            Gradient G(Gradient gr)
+            var source = Jotunn.Managers.PrefabManager.Instance.GetPrefab(ThunderbloodLightningPrefab);
+            var vfx = source ? source.transform.Find(ThunderbloodLightningPath) : null;
+            if (!vfx || blade == null)
             {
-                if (gr == null) return null;
-                var keys = gr.alphaKeys;
-                for (int i = 0; i < keys.Length; i++) keys[i].alpha *= k;
-                var faded = new Gradient { mode = gr.mode };
-                faded.SetKeys(gr.colorKeys, keys);
-                return faded;
+                Plugin.Log.LogWarning($"thunderblood lightning: {ThunderbloodLightningPrefab} or the blade's shape was not found, none");
+                return;
             }
-            switch (g.mode)
+            BladeFx.Lightning(node, blade, vfx, LightningName, BladeFx.ArcHot, BladeFx.ArcDeep);
+        }
+
+        // the game's frostfire greatsword burns with a cyan flame on its blade (Burny vfx: a flare, two flames and a
+        // light). the wakizashi carries them on its own curve, smaller and fainter (BladeFx.Flames)
+        private const string FrostFirePrefab = "THSwordGold_FrostFire", FrostFirePath = "attach/Krom/Burny vfx";
+
+        // a ranbu wave's own sparkle, the game's parts: the bloodgold lightning's red sparks on the katana's waves, the
+        // frostfire's cyan flames on the wakizashi's. spread along the bar by Crescent (WaveSparksAlong), left behind
+        // in the world as the bar flies on
+        private const string WaveSparksRed = "attach/VFX/Sparcs", WaveSparksBlue = "attach/Krom/Burny vfx/flames";
+        private const float WaveSparksRate = 3f, WaveSparksThick = 0.12f, WaveFlameSize = 0.6f;
+
+        internal static ParticleSystem WaveSparks(Transform wave, int look)
+        {
+            var source = Jotunn.Managers.PrefabManager.Instance.GetPrefab(look == 3 ? FrostFirePrefab : ThunderbloodLightningPrefab);
+            var part = source ? source.transform.Find(look == 3 ? WaveSparksBlue : WaveSparksRed) : null;
+            var from = part ? part.GetComponent<ParticleSystem>() : null;
+            if (!from) return null;
+            var copy = Object.Instantiate(part.gameObject, wave, false);
+            copy.name = "IaidoKatana_wave_sparks";
+            foreach (var t in copy.GetComponentsInChildren<Transform>(true)) t.gameObject.layer = wave.gameObject.layer;
+            var ps = copy.GetComponent<ParticleSystem>();
+            var main = ps.main;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.scalingMode = ParticleSystemScalingMode.Local;
+            if (look == 3) main.startSizeMultiplier *= WaveFlameSize;
+            var emission = ps.emission;
+            emission.rateOverTimeMultiplier *= WaveSparksRate;
+            var shape = ps.shape;
+            shape.shapeType = ParticleSystemShapeType.Box;
+            shape.rotation = Vector3.zero;
+            shape.randomDirectionAmount = 1f;
+            copy.SetActive(true);
+            ps.Play();
+            return ps;
+        }
+
+        // the sparkle's emitter laid along a bar: from one end, this long
+        internal static void WaveSparksAlong(ParticleSystem ps, Vector3 end, Vector3 along, float length)
+        {
+            ps.transform.position = end;
+            ps.transform.rotation = Quaternion.LookRotation(along, Vector3.up);
+            var shape = ps.shape;
+            shape.position = new Vector3(0f, 0f, length * 0.5f);
+            shape.scale = new Vector3(WaveSparksThick, WaveSparksThick, length);
+        }
+
+        internal static void FrostFlames(Transform blade, BladeShape shape)
+        {
+            var source = Jotunn.Managers.PrefabManager.Instance.GetPrefab(FrostFirePrefab);
+            var burny = source ? source.transform.Find(FrostFirePath) : null;
+            if (!burny || shape == null)
             {
-                case ParticleSystemGradientMode.Color: return new ParticleSystem.MinMaxGradient(F(g.color));
-                case ParticleSystemGradientMode.TwoColors: return new ParticleSystem.MinMaxGradient(F(g.colorMin), F(g.colorMax));
-                case ParticleSystemGradientMode.Gradient: return new ParticleSystem.MinMaxGradient(G(g.gradient));
-                case ParticleSystemGradientMode.TwoGradients: return new ParticleSystem.MinMaxGradient(G(g.gradientMin), G(g.gradientMax));
-                default:
-                    var random = new ParticleSystem.MinMaxGradient(G(g.gradient)) { mode = ParticleSystemGradientMode.RandomColor };
-                    return random;
+                Plugin.Log.LogWarning($"wakizashi flames: {FrostFirePrefab} or the blade's shape was not found, none");
+                return;
             }
+            BladeFx.Flames(blade, shape, burny, "IaidoKatana_frostfire");
         }
 
         // a copy of an item's blade lightning under parent (the katana mesh's frame), for the katana put away at the hip
@@ -865,7 +908,7 @@ namespace Iaido_Katana
         }
 
         // blade is the katana mesh in the hand, emit whether the cut is on now
-        internal void Sample(Transform blade, bool emit, bool flametal)
+        internal void Sample(Transform blade, bool emit, int look)
         {
             if (!_object) return;
             float now = Time.time;
@@ -903,7 +946,7 @@ namespace Iaido_Katana
             var bounds = filter && filter.sharedMesh ? filter.sharedMesh.bounds : new Bounds(Vector3.zero, Vector3.zero);
             var tipLocal = bounds.max.y > 1f ? new Vector3(bounds.max.x, bounds.max.y, 0f) : new Vector3(0.17f, 2.14f, 0f);
             var baseLocal = new Vector3(0f, BaseAlong, 0f);
-            var stops = flametal ? KatanaFx.FlametalTrail : KatanaFx.SteelTrail;
+            var stops = KatanaFx.TrailOf(look);
             _vertices.Clear();
             _colours.Clear();
             _triangles.Clear();

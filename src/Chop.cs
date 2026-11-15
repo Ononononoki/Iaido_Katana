@@ -13,9 +13,11 @@ namespace Iaido_Katana
 
         internal static bool On(ItemDrop.ItemData weapon) => Plugin.ChopOn.Value && Katana.IsKatana(weapon);
 
-        internal static float Damage(ItemDrop.ItemData weapon) => Plugin.IsFlametal(weapon) ? Plugin.FlametalChop.Value : Plugin.SteelChop.Value;
+        internal static float Damage(ItemDrop.ItemData weapon) =>
+            Katana.IsThunderblood(weapon) ? Plugin.ThunderbloodChop.Value : Plugin.IsFlametal(weapon) ? Plugin.FlametalChop.Value : Plugin.SteelChop.Value;
 
-        internal static int Tier(ItemDrop.ItemData weapon) => Plugin.IsFlametal(weapon) ? Plugin.FlametalChopTier.Value : Plugin.SteelChopTier.Value;
+        internal static int Tier(ItemDrop.ItemData weapon) =>
+            Katana.IsThunderblood(weapon) ? Plugin.ThunderbloodChopTier.Value : Plugin.IsFlametal(weapon) ? Plugin.FlametalChopTier.Value : Plugin.SteelChopTier.Value;
 
         // the tree, log or stump a collider belongs to, or null
         internal static IDestructible Tree(Collider collider)
@@ -25,10 +27,10 @@ namespace Iaido_Katana
         }
 
         // one chop on a tree, log or stump
-        internal static void Hit(Player player, ItemDrop.ItemData weapon, IDestructible tree, Vector3 point, Vector3 dir)
+        internal static void Hit(Player player, ItemDrop.ItemData weapon, IDestructible tree, Vector3 point, Vector3 dir, float share = 1f)
         {
             var hit = new HitData();
-            hit.m_damage.m_chop = Damage(weapon);
+            hit.m_damage.m_chop = Damage(weapon) * share;
             hit.m_toolTier = (short)Tier(weapon);
             hit.m_point = point;
             hit.m_dir = dir;

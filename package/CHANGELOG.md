@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- New: the Thunderblood Katana, a Deep North katana of Bloodgold and red lightning, crafted at the Black Forge level 4. It is a work in progress. It is playable, but its animations are still being reworked and its numbers may change.
+- It is worn with a short wakizashi at the other hip (a daisho). A perfect parry strikes back with both blades and sends two flying waves forward.
+- Its heavy attack is the Ranbu, 16 cuts with both blades in 5 s. Each cut sends a wave of red lightning or blue frostfire that flies 15 m and cuts every enemy it passes.
+- The Ranbu's waves fell trees, logs and stumps, but touch nothing inside a workbench's build range.
+- The Flametal Katana's lightning now lies thin along the blade itself. It stood beside the blade and was shorter than it.
+- Works with Valheim 1.0.21.
+
 ## 0.3.2
 
 - Animation speed control releases safely after interrupted attacks and weapon changes, while preserving hit stop.
