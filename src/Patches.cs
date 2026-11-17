@@ -68,6 +68,23 @@ namespace Iaido_Katana
             }
         }
 
+        // the Ranbu hardens the player as it goes: no less damage at its start, Daisho.RanbuResistMax less at its end. it
+        // ends with the Ranbu, finished or broken off (Daisho.Progress is -1 then). runs where the damage is applied, on the
+        // player's own client
+        [HarmonyPatch(typeof(Character), "RPC_Damage")]
+        private static class RanbuResist
+        {
+            private static void Prefix(Character __instance, HitData __1)
+            {
+                if (__1 == null || !(__instance is Player player) || player != Player.m_localPlayer) return;
+                float progress = Daisho.Progress(player);
+                if (progress < 0f) return;
+                float keep = 1f - Plugin.RanbuResistMax.Value * progress;
+                __1.m_damage.Modify(keep);
+                if (Plugin.LogCounters.Value) Plugin.Log.LogInfo($"ranbu: hit taken at {progress:0.00} of the move, {(1f - keep) * 100f:0}% less damage");
+            }
+        }
+
         // the hit of a katana parry that is being blocked right now adds no stagger to the parrying player
         [HarmonyPatch(typeof(Character), "AddStaggerDamage")]
         private static class NoStaggerOnParry
@@ -76,8 +93,19 @@ namespace Iaido_Katana
 
             private static readonly AccessTools.FieldRef<Character, float> StaggerDamage = AccessTools.FieldRefAccess<Character, float>("m_staggerDamage");
 
-            private static bool Prefix(Character __instance, float damage, ref bool __result)
+            private static bool Prefix(Character __instance, ref float damage, ref bool __result)
             {
+                // the Ranbu takes only its share of a hit's stagger (none by default), so nothing breaks it off but a dodge
+                if (__instance is Player player && Daisho.Progress(player) >= 0f)
+                {
+                    damage *= Plugin.RanbuStaggerShare.Value;
+                    if (damage <= 0f)
+                    {
+                        __result = false;
+                        if (Plugin.LogCounters.Value) Plugin.Log.LogInfo("ranbu: stagger from a hit not added");
+                        return false;
+                    }
+                }
                 if (!Guarding || __instance != Guarding) return true;
                 __result = false;
                 if (Plugin.LogCounters.Value) Plugin.Log.LogInfo($"katana parry: {damage:0.#} stagger from the parried hit not added");

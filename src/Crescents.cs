@@ -291,7 +291,7 @@ namespace Iaido_Katana
                 {
                     var who = collider ? collider.GetComponentInParent<Character>() : null;
                     if (!who || who == owner || who.IsDead() || _group.Hit.Contains(who) || !Thunderclap.Enemy(owner, who)) continue;
-                    if (Physics.Linecast(owner.GetCenterPoint(), who.GetCenterPoint(), Thunderclap.Walls)) continue;
+                    if (Physics.Linecast(owner.GetCenterPoint(), who.GetCenterPoint(), Thunderclap.Rock)) continue;
                     _group.Hit.Add(who);
                     Daisho.CrescentHit(_group, who, _forward);
                 }

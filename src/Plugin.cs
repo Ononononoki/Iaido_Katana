@@ -21,7 +21,7 @@ namespace Iaido_Katana
     {
         public const string ModGuid = "onononoki.Iaido_Katana";
         public const string ModName = "Iaido_Katana";
-        public const string ModVersion = "0.4.0";
+        public const string ModVersion = "0.4.1";
 
         internal static ManualLogSource Log;
         internal static ConfigEntry<bool> CounterEnabled;
@@ -45,6 +45,8 @@ namespace Iaido_Katana
         internal static ConfigEntry<float> CrescentKatanaShare;
         internal static ConfigEntry<float> CrescentWakizashiShare;
         internal static ConfigEntry<float> ParryWaveShare;
+        internal static ConfigEntry<float> RanbuResistMax;
+        internal static ConfigEntry<float> RanbuStaggerShare;
         internal static ConfigEntry<float> WakizashiParryShare;
         internal static ConfigEntry<bool> ChopBaseProtection;
         internal static ConfigEntry<float> RanbuTempo;
@@ -225,12 +227,16 @@ namespace Iaido_Katana
                 new ConfigDescription("What each flying crescent of the Ranbu's katana cuts does to a creature it passes, as a share of the katana's hit (once per cut).", new AcceptableValueRange<float>(0f, 3f), sync));
             CrescentWakizashiShare = _fixed.Bind("Daisho", "RanbuWakizashiShare", 0.25f,
                 new ConfigDescription("The same for the wakizashi's cuts (half frost, which slows).", new AcceptableValueRange<float>(0f, 3f), sync));
+            RanbuResistMax = _fixed.Bind("Daisho", "RanbuResistMax", 0.8f,
+                new ConfigDescription("Less damage taken during the Ranbu, rising from none at its start to this share at its end. Gone the moment it ends or is broken off.", new AcceptableValueRange<float>(0f, 1f), sync));
+            RanbuStaggerShare = _fixed.Bind("Daisho", "RanbuStaggerShare", 0f,
+                new ConfigDescription("Share of the stagger a hit adds while the Ranbu plays. 0: it cannot be staggered out of.", new AcceptableValueRange<float>(0f, 1f), sync));
             ParryWaveShare = _fixed.Bind("Daisho", "ParryWaveShare", 0.5f,
                 new ConfigDescription("The daisho parry's two cuts send flying waves like the Ranbu's. What each does to a creature it passes, as a share of a Ranbu wave of the same blade.", new AcceptableValueRange<float>(0f, 3f), sync));
             WakizashiParryShare = _fixed.Bind("Daisho", "WakizashiParryShare", 0.5f,
                 new ConfigDescription("What the wakizashi's hit of the daisho parry does, as a share of the katana's counter.", new AcceptableValueRange<float>(0f, 3f), sync));
             ChopBaseProtection = _fixed.Bind("Chop", "BaseProtection", true,
-                new ConfigDescription("The Ranbu's waves chop nothing that stands inside a workbench's build range.", null, sync));
+                new ConfigDescription("The Ranbu's waves chop nothing that stands inside a workbench's build range. Only the chop: creatures and dummies take a wave's damage there as everywhere.", null, sync));
             RanbuTempo = _fixed.Bind("Daisho", "RanbuTempo", 0.45f,
                 new ConfigDescription("How fast the Ranbu's first cut plays, as a share of the move's even speed. The cuts build up slowly and the last ones are the fastest (1 = even speed).", new AcceptableValueRange<float>(0.3f, 1f), sync));
             RanbuSeconds = _fixed.Bind("Daisho", "RanbuSeconds", 5f,

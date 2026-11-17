@@ -60,7 +60,9 @@ namespace Iaido_Katana
         // the wakizashi counts as drawn this far from its scabbard's place, and as back in it this near
         private const float WakiOutAt = 0.05f, WakiBackAt = 0.01f;
         // the hand over from a move's last pose back to the sheathing: the upper body, then the legs a little longer
-        private const float DaishoTailUpper = 0.25f, DaishoTailLegs = 0.45f;
+        // the moves end in the ready stance already; the katana arm and the shoulders still hand over to the sheathing slowly
+        // (the owner, 18 Nov: the end of the Ranbu was not easing enough)
+        private const float DaishoTailUpper = 0.60f, DaishoTailLegs = 0.60f;
         private const float DaishoHold = 0.2f; // the katana held out this long before the sheathing
 
         private static int RigOf(Player player)

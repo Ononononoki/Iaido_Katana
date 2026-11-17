@@ -19,8 +19,9 @@ namespace Iaido_Katana
         private const float WaveChopShare = 0.25f;    // of a wave's share of the katana's chop (sixteen waves a move)
 
         private static int? _creatures;
-        // the creatures the crescents cut (the Thunderclap's layers)
-        internal static int Creatures => _creatures ?? (_creatures = LayerMask.GetMask("character", "character_net", "character_ghost", "hitbox", "character_noenv")).Value;
+        // the creatures the crescents cut (the Thunderclap's layers), and the piece layer: a training dummy is a piece with
+        // a creature on it, its colliders are not on the creature layers (the owner, 18 Nov: the waves passed through it)
+        internal static int Creatures => _creatures ?? (_creatures = LayerMask.GetMask("character", "character_net", "character_ghost", "hitbox", "character_noenv", "piece", "piece_nonsolid")).Value;
 
         private static Player _player;
         private static float _start = -1f;
@@ -29,6 +30,9 @@ namespace Iaido_Katana
 
         // the Ranbu is playing for this player: the controls are off
         internal static bool Busy(Player player) => _start >= 0f && player == _player;
+
+        // how far the local player's Ranbu has come, 0 at its start to 1 at its end, -1 while none plays
+        internal static float Progress(Player player) => Busy(player) ? Mathf.Clamp01((Time.time - _start) / Mathf.Max(0.01f, IaiStance.RanbuSeconds)) : -1f;
 
         // true when this player's parry plays the daisho's, not the single cut
         internal static bool Parries(Player player) => On(player.GetCurrentWeapon()) && IaiStance.SlashOn && IaiStance.HoldsKatana(player);

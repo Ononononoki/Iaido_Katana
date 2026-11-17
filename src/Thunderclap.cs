@@ -18,6 +18,9 @@ namespace Iaido_Katana
         private static int? _ground, _walls, _creatures;
         private static int Ground => _ground ?? (_ground = LayerMask.GetMask("Default", "static_solid", "Default_small", "piece", "terrain", "vehicle")).Value;
         internal static int Walls => _walls ?? (_walls = LayerMask.GetMask("Default", "static_solid", "piece", "vehicle")).Value;
+        // rock and terrain only, no building pieces: a base never stops a wave's blow (the owner, 17 Nov), only its chop
+        private static int? _rock;
+        internal static int Rock => _rock ?? (_rock = LayerMask.GetMask("Default", "static_solid")).Value;
         private static int Creatures => _creatures ?? (_creatures = LayerMask.GetMask("character", "character_net", "character_ghost", "hitbox", "character_noenv")).Value;
 
         private const float WallMargin = 0.35f;   // the dash stops this far before a wall
@@ -324,6 +327,8 @@ namespace Iaido_Katana
         internal static bool Enemy(Player player, Character who)
         {
             if (who.IsPlayer()) return Plugin.CounterInPvP.Value && player.IsPVPEnabled() && who.IsPVPEnabled();
+            // a training dummy has no mind of its own, and the game's own swings hit it (the owner, 17 Nov)
+            if (who.GetFaction() == Character.Faction.TrainingDummy) return true;
             var ai = who.GetBaseAI();
             return BaseAI.IsEnemy(player, who) || (ai && ai.IsAggravatable());
         }

@@ -17,8 +17,8 @@ Inspired by real iaido, the art of drawing and cutting in one motion, and by Zen
 - **Animation recovery.** Lost custom-animation overrides can rebuild, and interrupted attacks release the katana's animation speed safely.
 - **Steel heavy attack.** Raised into a high stance (jodan) while a golden glint climbs the blade, then one huge cut straight down for 6 times the damage.
 - **Flametal Thunderclap.** The heavy attack crouches for 2.25 s while lightning gathers in the hands, then dashes 13 m along a 4 m wide path. Every enemy on the way, and just in front of where the dash ends, takes 10 times the damage, and nothing hits you during the dash.
-- **Thunderblood daisho (work in progress).** The Thunderblood Katana is worn with a short wakizashi at the other hip. A perfect parry strikes back with both blades and sends two flying waves forward. The heavy attack is the Ranbu, 16 cuts with both blades in 5 s. Each cut sends a wave of red lightning or blue frostfire that flies 15 m and cuts every enemy it passes. Like the game's Thunderblood weapons, it hits harder the more health is missing.
-- **Chopping.** The counter's cut, the Steel heavy attack and the Thunderclap fell trees, logs and stumps like an axe. The Ranbu's waves chop too, but nothing inside a workbench's build range.
+- **Thunderblood daisho (work in progress).** The Thunderblood Katana is worn with a short wakizashi at the other hip. A perfect parry strikes back with both blades and sends two flying waves forward. The heavy attack is the Ranbu, 5.4 s: both blades are drawn, then 16 cuts, then back to the ready stance. Each cut sends a wave of red lightning or blue frostfire that flies 15 m and cuts every enemy it passes, building pieces do not stop it. You take less and less damage while it plays (none at the start, 80 percent less at the end) and cannot be staggered. Like the game's Thunderblood weapons, it hits harder the more health is missing.
+- **Chopping.** The counter's cut, the Steel heavy attack and the Thunderclap fell trees, logs and stumps like an axe. The Ranbu's waves chop too, but nothing inside a workbench's build range (their damage to creatures is never stopped there).
 - **Effects.** Golden (Steel), blue-white lightning (Flametal) or red lightning (Thunderblood) afterimages of the counter, the heavy attack and the Thunderclap, which other players with the mod see too. Thin lightning runs along the Flametal and Thunderblood blades, and a cold blue flame along the wakizashi. A landed counter flashes as an ink picture with a short freeze, only on your screen.
 
 ## Crafting
@@ -67,6 +67,10 @@ The file is `BepInEx/config/onononoki.Iaido_Katana.cfg`. Gameplay settings are s
 ## Installation and compatibility
 
 Use a mod manager, or put `Iaido_Katana.dll` into `BepInEx/plugins`. Requires BepInExPack Valheim and Jotunn. For multiplayer, install it on the server and on every player. Only katanas change, every other weapon, block and parry stays vanilla.
+
+## Credits
+
+The Ranbu's and the parry's poses are based on the free (CC0) Universal Animation Library by Quaternius.
 
 ## Feedback and bug reports
 

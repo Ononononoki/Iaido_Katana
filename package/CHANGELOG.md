@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+
+- The Thunderblood Katana's Ranbu and daisho parry have new animations. The Ranbu now draws both blades first, cuts 16 times in a wider and lower stance with the head following the blade, and ends back in the ready stance. The parry strikes with the katana, then crosses it with the wakizashi. Both are based on free (CC0) motion references.
+- During the Ranbu you take less and less damage, from none at its start to 80 percent less at its end, and hits cannot stagger you. Both end the moment the Ranbu ends or is broken off. New settings `Daisho.RanbuResistMax` and `Daisho.RanbuStaggerShare`.
+- The Ranbu's and the parry's waves now hit training dummies, and building pieces no longer stop them. The workbench protection only stops them from chopping trees, logs and stumps.
+- The Thunderblood Katana is still a work in progress.
+
 ## 0.4.0
 
 - New: the Thunderblood Katana, a Deep North katana of Bloodgold and red lightning, crafted at the Black Forge level 4. It is a work in progress. It is playable, but its animations are still being reworked and its numbers may change.
